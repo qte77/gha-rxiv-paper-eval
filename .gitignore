@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Claude Code (project settings.json is committed; .local is per-user)
+.claude/settings.local.json
+MEMORY.md
+
+# OS / shell
+.DS_Store
+Thumbs.db
+
+# Eval script local outputs
+output/
