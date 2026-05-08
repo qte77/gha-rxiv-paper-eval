@@ -1,8 +1,8 @@
 # Design: reusable rxiv eval workflow
 
 This repo ships a single GitHub Actions reusable workflow that consumer repos
-(e.g. `OralBiome-AMP`, `UTI-pipeline`) call to turn the weekly preprint CSV
-produced by [`Lambda-Biolab/gha-rxiv-feed-action`](https://github.com/Lambda-Biolab/gha-rxiv-feed-action)
+call to turn the weekly preprint CSV produced by
+[`Lambda-Biolab/gha-rxiv-feed-action`](https://github.com/Lambda-Biolab/gha-rxiv-feed-action)
 into a topic-filtered, abstract-enriched feed.
 
 Tracking issue: [Lambda-Biolab/gha-rxiv-feed-action#7](https://github.com/Lambda-Biolab/gha-rxiv-feed-action/issues/7).
@@ -94,8 +94,8 @@ Secrets:
 GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
   --feed-repo Lambda-Biolab/gha-rxiv-feed-action \
   --server biorxiv \
-  --topic "antimicrobial peptide discovery" \
-  --categories microbiology \
+  --topic "<your topic>" \
+  --categories "<your categories>" \
   --max-papers 5 \
   --enrich \
   --output-dir /tmp/rxiv-eval

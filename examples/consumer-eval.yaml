@@ -1,8 +1,7 @@
-# Example: a consumer repo (e.g. OralBiome-AMP, UTI-pipeline) calling the
-# reusable eval workflow from gha-rxiv-paper-eval.
-#
-# Drop this in the consumer repo at .github/workflows/rxiv-eval.yaml and
-# tune the `topic`/`categories` to match the project.
+# Example: a consumer repo calling the reusable eval workflow from
+# gha-rxiv-paper-eval. Drop this in the consumer repo at
+# .github/workflows/rxiv-eval.yaml and tune the `topic`/`categories`
+# to match the project.
 name: rxiv weekly eval
 
 on:
@@ -28,7 +27,7 @@ jobs:
   eval:
     uses: Lambda-Biolab/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
     with:
-      topic: "oral microbiome antimicrobial peptide drug discovery"
+      topic: "<your project's relevance criterion>"
       server: biorxiv
       year: ${{ inputs.year }}
       week: ${{ inputs.week }}

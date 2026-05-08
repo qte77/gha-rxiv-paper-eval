@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       topic:
-        description: "Free-text topic the relevance filter will judge against (e.g. 'oral microbiome AMP drug discovery')."
+        description: "Free-text topic the relevance filter will judge against."
         type: string
         required: true
       server:

@@ -11,16 +11,15 @@ and (optionally) enriches each hit with the abstract + a structured extraction.
 
 ## Usage
 
-In a consumer repo (e.g. `OralBiome-AMP`, `UTI-pipeline`), add a workflow
-that calls this one. Minimum viable:
+In a consumer repo, add a workflow that calls this one. Minimum viable:
 
 ```yaml
 jobs:
   eval:
     uses: Lambda-Biolab/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
     with:
-      topic: "oral microbiome antimicrobial peptide drug discovery"
-      categories: "microbiology,bioinformatics"
+      topic: "<your project's relevance criterion>"
+      categories: "<comma-separated bioRxiv categories>"
     secrets:
       models-token: ${{ secrets.MODELS_TOKEN }}
 ```
@@ -43,8 +42,8 @@ the repo or org secret `MODELS_TOKEN`.
 GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
   --feed-repo Lambda-Biolab/gha-rxiv-feed-action \
   --server biorxiv \
-  --topic "antimicrobial peptide discovery" \
-  --categories microbiology \
+  --topic "<your topic>" \
+  --categories "<your categories>" \
   --max-papers 5 \
   --enrich \
   --output-dir /tmp/rxiv-eval
