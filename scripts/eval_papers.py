@@ -174,8 +174,12 @@ def gh_models_rest(model: str, system_prompt: str, user_prompt: str, max_tokens:
     return body["choices"][0]["message"]["content"]
 
 
-def is_relevant(paper: Paper, *, model: str, system_prompt: str) -> bool:
-    user_prompt = f"Title: {paper.title}\nCategory: {paper.category}"
+def is_relevant(paper: Paper, abstract: str, *, model: str, system_prompt: str) -> bool:
+    user_prompt = (
+        f"Title: {paper.title}\n"
+        f"Category: {paper.category}\n\n"
+        f"Abstract: {abstract or '(unavailable)'}"
+    )
     verdict = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
     return verdict.strip().upper().startswith("YES")
 
@@ -263,25 +267,25 @@ def main() -> int:
         topic=args.topic
     )
 
-    relevant: list[Paper] = []
+    relevant: list[tuple[Paper, str]] = []
     for i, paper in enumerate(papers, 1):
+        abstract = fetch_abstract(args.server, paper.doi)
         try:
-            keep = is_relevant(paper, model=args.model, system_prompt=relevance_prompt)
+            keep = is_relevant(paper, abstract, model=args.model, system_prompt=relevance_prompt)
         except RuntimeError as exc:
             print(f"WARN: relevance call failed for {paper.doi}: {exc}", file=sys.stderr)
             continue
         marker = "YES" if keep else "no "
         print(f"[{i}/{after_prefilter}] {marker} {paper.doi} {paper.title[:80]}", file=sys.stderr)
         if keep:
-            relevant.append(paper)
+            relevant.append((paper, abstract))
 
-    write_papers(relevant, output_dir / "relevant.csv")
+    write_papers([p for p, _ in relevant], output_dir / "relevant.csv")
 
     if args.enrich and relevant:
         extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or DEFAULT_EXTRACTION_PROMPT
         with (output_dir / "extracts.jsonl").open("w") as f:
-            for paper in relevant:
-                abstract = fetch_abstract(args.server, paper.doi)
+            for paper, abstract in relevant:
                 fields = extract_fields(abstract, model=args.model, system_prompt=extraction_prompt)
                 record = {**asdict(paper), "abstract": abstract, "extracted": fields}
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -294,7 +298,7 @@ def main() -> int:
         topic=args.topic,
         total=total,
         after_prefilter=after_prefilter,
-        relevant=relevant,
+        relevant=[p for p, _ in relevant],
     )
 
     print(f"Done. Relevant: {len(relevant)}/{after_prefilter}", file=sys.stderr)

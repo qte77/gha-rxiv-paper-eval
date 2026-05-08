@@ -84,5 +84,42 @@ class GhModelsRestTests(unittest.TestCase):
         self.assertIn("429", str(ctx.exception))
 
 
+class IsRelevantTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"GH_TOKEN": "fake-token"})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _paper(self, **overrides) -> "eval_papers.Paper":
+        defaults = dict(
+            date="2026-05-04",
+            iso_week="19",
+            doi="10.64898/2026.05.01.000001",
+            version="1",
+            category="biophysics",
+            title="Kinetics of process X under varying conditions",
+            authors="Doe, J.",
+        )
+        defaults.update(overrides)
+        return eval_papers.Paper(**defaults)
+
+    def test_user_prompt_includes_title_category_and_abstract(self) -> None:
+        paper = self._paper()
+        abstract = "We characterize the dynamics of process X across temperatures."
+        resp = _fake_response(
+            {"choices": [{"message": {"role": "assistant", "content": "YES"}}]}
+        )
+        with patch("urllib.request.urlopen", return_value=resp) as mock_urlopen:
+            result = eval_papers.is_relevant(
+                paper, abstract, model="openai/gpt-4o-mini", system_prompt="sys"
+            )
+        self.assertTrue(result)
+        body = json.loads(mock_urlopen.call_args.args[0].data)
+        user_msg = next(m["content"] for m in body["messages"] if m["role"] == "user")
+        self.assertIn(paper.title, user_msg)
+        self.assertIn(paper.category, user_msg)
+        self.assertIn(abstract, user_msg)
+
+
 if __name__ == "__main__":
     unittest.main()

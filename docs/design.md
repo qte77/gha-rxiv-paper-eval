@@ -10,8 +10,8 @@ Tracking issue: [Lambda-Biolab/gha-rxiv-feed-action#7](https://github.com/Lambda
 ## Pipeline
 
 ```
-producer CSV  ─►  fetch  ─►  category pre-filter  ─►  LLM YES/NO  ─►  abstract fetch  ─►  LLM extract  ─►  artifact
-              gh api         (cheap, optional)        Models REST   biorxiv API         Models REST     upload-artifact
+producer CSV  ─►  fetch  ─►  category pre-filter  ─►  abstract fetch  ─►  LLM YES/NO  ─►  LLM extract  ─►  artifact
+              gh api         (cheap, optional)        biorxiv API         Models REST   Models REST     upload-artifact
 ```
 
 1. **Fetch** the week's CSV from `data/<server>/<year>/<week>.csv` in the feed repo.
@@ -20,14 +20,18 @@ producer CSV  ─►  fetch  ─►  category pre-filter  ─►  LLM YES/NO  �
    work.
 3. **Cap (optional).** `max_papers` truncates the candidate set; useful for cost
    ceilings during prototyping.
-4. **Relevance filter.** `POST https://models.github.ai/inference/chat/completions`
-   with `temperature=0`, `max_tokens=4`, one row at a time. The system prompt is
-   `DEFAULT_RELEVANCE_PROMPT` with `{topic}` substituted, or fully overridden via
-   the `relevance_prompt` input.
-5. **Enrichment (optional).** For each YES, fetch the abstract from
-   `https://api.biorxiv.org/details/{server}/{doi}` and run an extraction
-   prompt that returns JSON.
-6. **Artifact upload.** `relevant.csv` + `extracts.jsonl` + `summary.md`.
+4. **Abstract fetch.** Pull the abstract from
+   `https://api.biorxiv.org/details/{server}/{doi}` for every survivor. The
+   abstract is required input for both the relevance and extraction passes
+   (titles alone often don't carry enough signal for narrow topics).
+5. **Relevance filter.** `POST https://models.github.ai/inference/chat/completions`
+   with `temperature=0`, `max_tokens=4`, one paper at a time. The user message
+   carries `Title`, `Category`, and `Abstract`. The system prompt is
+   `DEFAULT_RELEVANCE_PROMPT` with `{topic}` substituted, or fully overridden
+   via the `relevance_prompt` input.
+6. **Enrichment (optional).** For each YES, run the extraction prompt against
+   the already-fetched abstract.
+7. **Artifact upload.** `relevant.csv` + `extracts.jsonl` + `summary.md`.
 
 ## Inputs / outputs
 
