@@ -78,8 +78,6 @@ Secrets:
 
 ## Open prototype questions
 
-- **Action SHAs.** The workflow currently uses `@v4`/`@v5`; pin to commit SHAs
-  before tagging a release.
 - **`gh models` quotas.** GitHub Models has rate / token quotas tied to the
   caller's GitHub plan. For large weeks a worker pool with retries (currently
   serial) would help.
