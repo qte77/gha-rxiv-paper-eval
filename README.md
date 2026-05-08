@@ -2,7 +2,7 @@
 
 Reusable GitHub Actions workflow that consumes the weekly preprint CSV emitted
 by [`Lambda-Biolab/gha-rxiv-feed-action`](https://github.com/Lambda-Biolab/gha-rxiv-feed-action),
-runs a topic-focused relevance filter through [GitHub Models](https://github.com/github/gh-models),
+runs a topic-focused relevance filter through [GitHub Models](https://docs.github.com/en/github-models),
 and (optionally) enriches each hit with the abstract + a structured extraction.
 
 > **Status:** prototype. See `docs/design.md` for the contract and open
@@ -49,7 +49,7 @@ GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
   --output-dir /tmp/rxiv-eval
 ```
 
-Requires `gh extension install github/gh-models`.
+No `gh` extension needed — the script POSTs directly to the GitHub Models REST endpoint.
 
 ## Layout
 

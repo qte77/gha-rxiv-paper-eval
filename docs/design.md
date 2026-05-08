@@ -11,7 +11,7 @@ Tracking issue: [Lambda-Biolab/gha-rxiv-feed-action#7](https://github.com/Lambda
 
 ```
 producer CSV  ─►  fetch  ─►  category pre-filter  ─►  LLM YES/NO  ─►  abstract fetch  ─►  LLM extract  ─►  artifact
-              gh api         (cheap, optional)        gh-models      biorxiv API         gh-models       upload-artifact
+              gh api         (cheap, optional)        Models REST   biorxiv API         Models REST     upload-artifact
 ```
 
 1. **Fetch** the week's CSV from `data/<server>/<year>/<week>.csv` in the feed repo.
@@ -20,9 +20,10 @@ producer CSV  ─►  fetch  ─►  category pre-filter  ─►  LLM YES/NO  �
    work.
 3. **Cap (optional).** `max_papers` truncates the candidate set; useful for cost
    ceilings during prototyping.
-4. **Relevance filter.** `gh models run --temperature 0 --max-tokens 4` per row;
-   the system prompt is `DEFAULT_RELEVANCE_PROMPT` with `{topic}` substituted,
-   or fully overridden via the `relevance_prompt` input.
+4. **Relevance filter.** `POST https://models.github.ai/inference/chat/completions`
+   with `temperature=0`, `max_tokens=4`, one row at a time. The system prompt is
+   `DEFAULT_RELEVANCE_PROMPT` with `{topic}` substituted, or fully overridden via
+   the `relevance_prompt` input.
 5. **Enrichment (optional).** For each YES, fetch the abstract from
    `https://api.biorxiv.org/details/{server}/{doi}` and run an extraction
    prompt that returns JSON.
@@ -40,7 +41,7 @@ for the authoritative list. Highlights:
 | `year` / `week` | current ISO | UTC. Override for backfills. |
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
 | `max_papers` | 0 | 0 = no cap. |
-| `model` | `openai/gpt-4o-mini` | Any `gh models`-supported id. |
+| `model` | `openai/gpt-4o-mini` | Any GitHub Models–supported id. |
 | `enrich` | `true` | Toggles the abstract fetch + extraction pass. |
 | `relevance_prompt` / `extraction_prompt` | "" | Override the defaults. |
 
@@ -78,12 +79,11 @@ Secrets:
 
 ## Open prototype questions
 
-- **`gh models` quotas.** GitHub Models has rate / token quotas tied to the
-  caller's GitHub plan. For large weeks a worker pool with retries (currently
-  serial) would help.
+- **GitHub Models quotas.** Inference is rate / token-limited per GitHub plan.
+  For large weeks a worker pool with retries (currently serial) would help.
 - **Custom extraction schemas per consumer.** Today the schema is hardcoded in
-  `DEFAULT_EXTRACTION_PROMPT`. If schemas diverge a lot, switch to gh-models'
-  prompt-file (`.prompt.yml`) feature with per-consumer files.
+  `DEFAULT_EXTRACTION_PROMPT`. If schemas diverge a lot, externalize the prompt
+  into a per-consumer file the workflow path-inputs.
 - **Caching.** Same DOI evaluated across two consumers pays twice. A keyed
   cache (DOI → relevance verdict + extract) would be cheap to add later if it
   matters.
@@ -101,4 +101,6 @@ GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
   --output-dir /tmp/rxiv-eval
 ```
 
-Outputs land in `/tmp/rxiv-eval/`. Requires `gh extension install github/gh-models`.
+Outputs land in `/tmp/rxiv-eval/`. The script POSTs to the GitHub Models REST
+endpoint directly (`https://models.github.ai/inference/chat/completions`); no
+`gh` extension is required.

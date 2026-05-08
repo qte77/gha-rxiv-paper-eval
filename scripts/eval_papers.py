@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate a weekly preprint CSV via gh-models.
+"""Evaluate a weekly preprint CSV via the GitHub Models REST API.
 
 Pipeline:
     1. Fetch data/<server>/<year>/<week>.csv from the feed repo.
@@ -9,9 +9,10 @@ Pipeline:
        -> extracts.jsonl.
     5. Write summary.md.
 
-Designed to be invoked from .github/workflows/eval-papers.yaml.
-Stdlib only; the only external dependency is the `gh` CLI with the
-`github/gh-models` extension installed and authenticated.
+Designed to be invoked from .github/workflows/eval-papers.yaml. Stdlib only.
+External services: `gh` CLI for the feed-CSV fetch (uses GH_TOKEN), and a
+direct HTTPS POST to https://models.github.ai/inference/chat/completions for
+inference (also uses GH_TOKEN; requires the `models: read` scope).
 """
 from __future__ import annotations
 
@@ -138,37 +139,45 @@ def write_papers(papers: list[Paper], dest: Path) -> None:
             w.writerow(paper.as_row())
 
 
-def gh_models_run(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    """Invoke `gh models run` and return stdout (trimmed)."""
-    proc = subprocess.run(
-        [
-            "gh",
-            "models",
-            "run",
-            "--system-prompt",
-            system_prompt,
-            "--temperature",
-            "0",
-            "--max-tokens",
-            str(max_tokens),
-            model,
-            user_prompt,
+GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
+
+
+def gh_models_rest(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    """POST to GitHub Models REST and return the assistant message content."""
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
-        check=False,
-        capture_output=True,
-        text=True,
+    }
+    req = urllib.request.Request(
+        GITHUB_MODELS_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
     )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"gh models run failed (exit {proc.returncode}): {proc.stderr.strip()}"
-        )
-    return proc.stdout.strip()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        raise RuntimeError(f"GitHub Models HTTP {exc.code}: {detail.strip()}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"GitHub Models network error: {exc.reason}") from exc
+    return body["choices"][0]["message"]["content"]
 
 
 def is_relevant(paper: Paper, *, model: str, system_prompt: str) -> bool:
     user_prompt = f"Title: {paper.title}\nCategory: {paper.category}"
-    verdict = gh_models_run(model, system_prompt, user_prompt, max_tokens=4)
-    return verdict.upper().startswith("YES")
+    verdict = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
+    return verdict.strip().upper().startswith("YES")
 
 
 def fetch_abstract(server: str, doi: str) -> str:
@@ -188,7 +197,7 @@ def fetch_abstract(server: str, doi: str) -> str:
 def extract_fields(abstract: str, *, model: str, system_prompt: str) -> dict:
     if not abstract:
         return {}
-    raw = gh_models_run(model, system_prompt, abstract, max_tokens=512)
+    raw = gh_models_rest(model, system_prompt, abstract, max_tokens=512)
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
