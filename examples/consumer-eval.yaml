@@ -1,0 +1,71 @@
+# Example: a consumer repo (e.g. OralBiome-AMP, UTI-pipeline) calling the
+# reusable eval workflow from gha-rxiv-paper-eval.
+#
+# Drop this in the consumer repo at .github/workflows/rxiv-eval.yaml and
+# tune the `topic`/`categories` to match the project.
+name: rxiv weekly eval
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"   # Mondays after the producer's nightly cron
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "ISO week (1-53). Empty = current."
+        type: string
+        default: ""
+      year:
+        description: "ISO year. Empty = current."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  models: read
+  issues: write   # only needed if you wire issue creation below
+
+jobs:
+  eval:
+    uses: Lambda-Biolab/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
+    with:
+      topic: "oral microbiome antimicrobial peptide drug discovery"
+      server: biorxiv
+      year: ${{ inputs.year }}
+      week: ${{ inputs.week }}
+      categories: "microbiology,bioinformatics,synthetic biology,pharmacology and toxicology"
+      max_papers: 0
+      model: openai/gpt-4o-mini
+      enrich: true
+    secrets:
+      # Org/user secret holding a token with `models: read`. Create via
+      # Settings -> Developer settings -> Personal access tokens (fine-grained)
+      # and store as a repo or org secret named MODELS_TOKEN.
+      models-token: ${{ secrets.MODELS_TOKEN }}
+
+  triage:
+    needs: eval
+    if: ${{ fromJSON(needs.eval.outputs.relevant_count) > 0 }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download eval artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.eval.outputs.artifact_name }}
+          path: eval-output
+
+      - name: Open issues for relevant papers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            doi=$(jq -r '.doi' <<<"$line")
+            title=$(jq -r '.title' <<<"$line")
+            summary=$(jq -r '.extracted.summary // ""' <<<"$line")
+            body=$(jq -n --arg d "$doi" --arg s "$summary" \
+              '"DOI: https://doi.org/\($d)\n\n\($s)"')
+            gh issue create \
+              --title "rxiv: $title" \
+              --body "$body" \
+              --label "rxiv-feed"
+          done < eval-output/extracts.jsonl

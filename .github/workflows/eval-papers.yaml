@@ -1,0 +1,146 @@
+name: Evaluate rxiv papers (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      topic:
+        description: "Free-text topic the relevance filter will judge against (e.g. 'oral microbiome AMP drug discovery')."
+        type: string
+        required: true
+      server:
+        description: "Preprint server: biorxiv or medrxiv."
+        type: string
+        default: biorxiv
+      year:
+        description: "ISO year (YYYY). Empty = current ISO year (UTC)."
+        type: string
+        default: ""
+      week:
+        description: "ISO week (1-53). Empty = current ISO week (UTC)."
+        type: string
+        default: ""
+      categories:
+        description: "Comma-separated category allowlist applied before the LLM step. Empty = no pre-filter."
+        type: string
+        default: ""
+      max_papers:
+        description: "Cap rows sent to the LLM (after category pre-filter). 0 = no cap."
+        type: number
+        default: 0
+      model:
+        description: "gh-models model id used for both relevance and extraction."
+        type: string
+        default: openai/gpt-4o-mini
+      enrich:
+        description: "If true, fetch abstracts from the rxiv API and run the structured-extraction prompt."
+        type: boolean
+        default: true
+      relevance_prompt:
+        description: "Override the default relevance system prompt. {topic} placeholder is substituted."
+        type: string
+        default: ""
+      extraction_prompt:
+        description: "Override the default extraction system prompt."
+        type: string
+        default: ""
+      feed_repo:
+        description: "Producer repo that hosts data/<server>/<year>/<week>.csv."
+        type: string
+        default: Lambda-Biolab/gha-rxiv-feed-action
+      eval_repo_ref:
+        description: "Ref of gha-rxiv-paper-eval to check out (tag/branch/SHA)."
+        type: string
+        default: main
+    secrets:
+      models-token:
+        description: >-
+          Token with `models: read` permission for GitHub Models. Required.
+          A fine-grained PAT or org-scoped token works; the default GITHUB_TOKEN
+          on `pull_request` from forks (and some org policies) cannot call
+          GitHub Models, hence the explicit secret.
+        required: true
+    outputs:
+      relevant_count:
+        description: "Number of papers that passed the relevance filter."
+        value: ${{ jobs.evaluate.outputs.relevant_count }}
+      artifact_name:
+        description: "Name of the uploaded artifact containing eval outputs."
+        value: ${{ jobs.evaluate.outputs.artifact_name }}
+
+permissions:
+  contents: read
+  models: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    outputs:
+      relevant_count: ${{ steps.run.outputs.relevant_count }}
+      artifact_name: ${{ steps.run.outputs.artifact_name }}
+    steps:
+      # TODO(prototype): pin actions to commit SHAs before merging.
+      - name: Checkout eval repo
+        uses: actions/checkout@v4
+        with:
+          repository: Lambda-Biolab/gha-rxiv-paper-eval
+          ref: ${{ inputs.eval_repo_ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install gh-models extension
+        env:
+          # Extension install only needs to read the public github/gh-models
+          # repo, so the default token is fine here. Inference uses the
+          # caller-supplied models token (next step).
+          GH_TOKEN: ${{ github.token }}
+        run: gh extension install github/gh-models
+
+      - name: Run evaluation
+        id: run
+        env:
+          # Used for both `gh api` (feed fetch) and `gh models run` (inference).
+          # Must carry `models: read`.
+          GH_TOKEN: ${{ secrets.models-token }}
+          INPUT_TOPIC: ${{ inputs.topic }}
+          INPUT_SERVER: ${{ inputs.server }}
+          INPUT_YEAR: ${{ inputs.year }}
+          INPUT_WEEK: ${{ inputs.week }}
+          INPUT_CATEGORIES: ${{ inputs.categories }}
+          INPUT_MAX_PAPERS: ${{ inputs.max_papers }}
+          INPUT_MODEL: ${{ inputs.model }}
+          INPUT_ENRICH: ${{ inputs.enrich }}
+          INPUT_FEED_REPO: ${{ inputs.feed_repo }}
+          RELEVANCE_PROMPT: ${{ inputs.relevance_prompt }}
+          EXTRACTION_PROMPT: ${{ inputs.extraction_prompt }}
+        run: |
+          set -euo pipefail
+          args=(
+            --feed-repo "$INPUT_FEED_REPO"
+            --server "$INPUT_SERVER"
+            --topic "$INPUT_TOPIC"
+            --model "$INPUT_MODEL"
+            --max-papers "$INPUT_MAX_PAPERS"
+            --output-dir output
+          )
+          [[ -n "$INPUT_YEAR" ]] && args+=(--year "$INPUT_YEAR")
+          [[ -n "$INPUT_WEEK" ]] && args+=(--week "$INPUT_WEEK")
+          [[ -n "$INPUT_CATEGORIES" ]] && args+=(--categories "$INPUT_CATEGORIES")
+          [[ "$INPUT_ENRICH" == "true" ]] && args+=(--enrich)
+
+          python scripts/eval_papers.py "${args[@]}"
+
+          relevant=$(python -c "import csv; print(sum(1 for _ in csv.reader(open('output/relevant.csv'))) - 1)")
+          echo "relevant_count=${relevant}" >> "$GITHUB_OUTPUT"
+
+          read -r y w < output/.resolved_yw
+          echo "artifact_name=rxiv-eval-${INPUT_SERVER}-${y}-w${w}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.run.outputs.artifact_name }}
+          path: output/
+          if-no-files-found: error
