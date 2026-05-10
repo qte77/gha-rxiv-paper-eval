@@ -28,7 +28,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 DEFAULT_RELEVANCE_PROMPT = (
@@ -260,9 +260,9 @@ def is_relevant(
     system_prompt: str,
     output_dir: Path | None = None,
 ) -> bool:
-    cache_dir: Path | None = (
-        output_dir if output_dir is not None and os.environ.get("RXIV_EVAL_NO_CACHE") != "1" else None
-    )
+    cache_dir: Path | None = output_dir
+    if os.environ.get("RXIV_EVAL_NO_CACHE") == "1":
+        cache_dir = None
 
     if cache_dir is not None:
         cached = _cache_load(cache_dir, paper.doi)

@@ -12,10 +12,9 @@ import pathlib
 import shutil
 import sys
 import tempfile
-import time
 import unittest
 import urllib.error
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import eval_papers
 
@@ -476,7 +475,7 @@ class DoiCacheTests(unittest.TestCase):
                 cache_file = eval_papers._cache_path(out, paper.doi)
                 self.assertFalse(
                     cache_file.exists(),
-                    f"cache file should not exist when RXIV_EVAL_NO_CACHE=1",
+                    "cache file should not exist when RXIV_EVAL_NO_CACHE=1",
                 )
 
                 # Second call should hit urlopen again (different response)
