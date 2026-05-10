@@ -46,6 +46,7 @@ has model-specific limits.
 ### What this means for us
 
 Our prompts:
+
 - Relevance: title + category, ~50 tokens in, 4 tokens out (`YES`/`NO`).
 - Extraction: a single rxiv abstract, ~300–800 tokens in, ≤512 tokens JSON out.
 

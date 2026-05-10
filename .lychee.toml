@@ -1,0 +1,13 @@
+# Lychee link checker config
+# https://lychee.cli.rs/usage/config/
+
+accept = [200, 201, 204, 429]
+timeout = 30
+max_retries = 2
+
+exclude = [
+    # Auth-required endpoints — referenced as targets in docs, 401 without token
+    "^https://models\\.github\\.ai/inference",
+    # Vendor consoles — redirect to login
+    "^https://console\\.mistral\\.ai",
+]

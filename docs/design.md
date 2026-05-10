@@ -9,7 +9,7 @@ Tracking issue: [Lambda-Biolab/gha-rxiv-feed-action#7](https://github.com/Lambda
 
 ## Pipeline
 
-```
+```text
 producer CSV  ─►  fetch  ─►  category pre-filter  ─►  abstract fetch  ─►  LLM YES/NO  ─►  LLM extract  ─►  artifact
               gh api         (cheap, optional)        biorxiv API         Models REST   Models REST     upload-artifact
 ```
