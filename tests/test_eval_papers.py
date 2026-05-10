@@ -328,8 +328,8 @@ class OfflineStubTests(unittest.TestCase):
 
 _FIXTURE_FEED = """\
 Date,ISOWeek,DOI,Version,Category,Title,Authors
-2026-04-06,15,10.1101/2024.09.07.000001,1,microbiology,Paper one about bacteria enzymes,Smith J.
-2026-04-06,15,10.1101/2024.09.07.000002,1,microbiology,Paper two about UTI drug targets,Jones A.
+2026-04-06,15,10.1101/2024.09.07.000001,1,microbiology,Paper one about bacterial enzymes,Smith J.
+2026-04-06,15,10.1101/2024.09.07.000002,1,microbiology,Paper two about membrane transporters,Jones A.
 """
 
 
