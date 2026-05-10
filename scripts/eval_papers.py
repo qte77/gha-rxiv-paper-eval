@@ -19,10 +19,13 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import hashlib
 import json
 import os
+import random
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, asdict
@@ -141,50 +144,152 @@ def write_papers(papers: list[Paper], dest: Path) -> None:
 
 GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
 
+RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+
+
+def _stub_response(user_prompt: str) -> str:
+    """Offline stub for tests/local dev. Mode chosen by RXIV_EVAL_STUB_MODE."""
+    mode = os.environ.get("RXIV_EVAL_STUB_MODE", "hash")
+    if mode == "yes":
+        return "YES"
+    if mode == "no":
+        return "NO"
+    if mode == "flaky" and random.random() < 0.33:
+        raise urllib.error.HTTPError(
+            url=GITHUB_MODELS_URL,
+            code=429,
+            msg="simulated rate limit",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=None,
+        )
+    h = int(hashlib.sha256(user_prompt.encode("utf-8")).hexdigest(), 16)
+    return "YES" if h % 4 == 0 else "NO"
+
+
+def _sanitize_doi(doi: str) -> str:
+    return doi.replace("/", "_").replace("\\", "_")
+
+
+def _cache_path(output_dir: Path, doi: str) -> Path:
+    return output_dir / ".cache" / f"{_sanitize_doi(doi)}.json"
+
+
+def _cache_load(output_dir: Path, doi: str) -> dict | None:
+    path = _cache_path(output_dir, doi)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+
+
+def _cache_save(output_dir: Path, doi: str, payload: dict) -> None:
+    path = _cache_path(output_dir, doi)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False))
+
 
 def gh_models_rest(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    """POST to GitHub Models REST and return the assistant message content."""
-    payload = {
-        "model": model,
-        "temperature": 0,
-        "max_tokens": max_tokens,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    }
-    req = urllib.request.Request(
-        GITHUB_MODELS_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
-    try:
+    """POST to GitHub Models REST and return the assistant message content.
+
+    Retries 429/5xx and transient network errors with exponential backoff.
+    Honors RXIV_EVAL_OFFLINE=1 to skip the network entirely (returns a stub).
+    """
+    max_attempts = int(os.environ.get("RXIV_EVAL_RETRY_MAX_ATTEMPTS", "5"))
+    base = float(os.environ.get("RXIV_EVAL_RETRY_BASE_SECS", "4.0"))
+    offline = os.environ.get("RXIV_EVAL_OFFLINE") == "1"
+
+    def _do_call() -> str:
+        if offline:
+            return _stub_response(user_prompt)
+        payload = {
+            "model": model,
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        req = urllib.request.Request(
+            GITHUB_MODELS_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=30) as resp:
             body = json.load(resp)
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-        raise RuntimeError(f"GitHub Models HTTP {exc.code}: {detail.strip()}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"GitHub Models network error: {exc.reason}") from exc
-    return body["choices"][0]["message"]["content"]
+        return body["choices"][0]["message"]["content"]
+
+    last_code: int | None = None
+    last_err: str | None = None
+
+    for attempt in range(max_attempts):
+        try:
+            return _do_call()
+        except urllib.error.HTTPError as exc:
+            if exc.code not in RETRYABLE_HTTP_CODES:
+                detail = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+                raise RuntimeError(
+                    f"GitHub Models HTTP {exc.code}: {detail.strip()}"
+                ) from exc
+            last_code = exc.code
+            last_err = f"HTTP {exc.code}"
+        except urllib.error.URLError as exc:
+            last_err = f"network error: {exc.reason}"
+
+        if attempt + 1 < max_attempts:
+            time.sleep(base * (2 ** attempt))
+
+    code_str = str(last_code) if last_code is not None else "network"
+    raise RuntimeError(
+        f"GitHub Models {code_str}: gave up after {max_attempts} attempts ({last_err})"
+    )
 
 
-def is_relevant(paper: Paper, abstract: str, *, model: str, system_prompt: str) -> bool:
+def is_relevant(
+    paper: Paper,
+    abstract: str,
+    *,
+    model: str,
+    system_prompt: str,
+    output_dir: Path | None = None,
+) -> bool:
+    cache_dir: Path | None = (
+        output_dir if output_dir is not None and os.environ.get("RXIV_EVAL_NO_CACHE") != "1" else None
+    )
+
+    if cache_dir is not None:
+        cached = _cache_load(cache_dir, paper.doi)
+        if cached is not None:
+            return bool(cached.get("relevant"))
+
     user_prompt = (
         f"Title: {paper.title}\n"
         f"Category: {paper.category}\n\n"
         f"Abstract: {abstract or '(unavailable)'}"
     )
     verdict = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
-    return verdict.strip().upper().startswith("YES")
+    relevant = verdict.strip().upper().startswith("YES")
+
+    if cache_dir is not None:
+        _cache_save(
+            cache_dir,
+            paper.doi,
+            {"doi": paper.doi, "relevant": relevant, "raw": verdict},
+        )
+
+    return relevant
 
 
 def fetch_abstract(server: str, doi: str) -> str:
+    if os.environ.get("RXIV_EVAL_OFFLINE") == "1":
+        return ""
     url = RXIV_DETAILS_URL.format(server=server, doi=doi)
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
@@ -271,7 +376,13 @@ def main() -> int:
     for i, paper in enumerate(papers, 1):
         abstract = fetch_abstract(args.server, paper.doi)
         try:
-            keep = is_relevant(paper, abstract, model=args.model, system_prompt=relevance_prompt)
+            keep = is_relevant(
+                paper,
+                abstract,
+                model=args.model,
+                system_prompt=relevance_prompt,
+                output_dir=output_dir,
+            )
         except RuntimeError as exc:
             print(f"WARN: relevance call failed for {paper.doi}: {exc}", file=sys.stderr)
             continue
@@ -286,7 +397,13 @@ def main() -> int:
         extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or DEFAULT_EXTRACTION_PROMPT
         with (output_dir / "extracts.jsonl").open("w") as f:
             for paper, abstract in relevant:
-                fields = extract_fields(abstract, model=args.model, system_prompt=extraction_prompt)
+                try:
+                    fields = extract_fields(
+                        abstract, model=args.model, system_prompt=extraction_prompt
+                    )
+                except RuntimeError as exc:
+                    print(f"WARN: extract failed for {paper.doi}: {exc}", file=sys.stderr)
+                    fields = {}
                 record = {**asdict(paper), "abstract": abstract, "extracted": fields}
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
