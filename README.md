@@ -2,8 +2,10 @@
 
 Reusable GitHub Actions workflow that consumes the weekly preprint CSV emitted
 by [`Lambda-Biolab/gha-rxiv-feed-action`](https://github.com/Lambda-Biolab/gha-rxiv-feed-action),
-runs a topic-focused relevance filter through [GitHub Models](https://docs.github.com/en/github-models),
-and (optionally) enriches each hit with the abstract + a structured extraction.
+runs a topic-focused relevance filter through a pluggable classifier backend
+([GitHub Models](https://docs.github.com/en/github-models) by default; Gemini
+or Anthropic via the `provider:` input), and (optionally) enriches each hit
+with the abstract + a structured extraction.
 
 > **Status:** prototype. See `docs/design.md` for the contract and open
 > questions. Tracking issue:
@@ -29,12 +31,16 @@ build artifact for downstream jobs (issue creation, indexing, etc).
 A copy-pasteable example with a triage job that opens GitHub issues lives at
 [`examples/consumer-eval.yaml`](examples/consumer-eval.yaml).
 
-## Required secret
+## Provider backends
 
-`MODELS_TOKEN` — a token with `models: read`. The default `GITHUB_TOKEN` is
-not always enough (org policies, PR-from-fork contexts), so this workflow
-takes it as an explicit secret. Create a fine-grained PAT and store it as
-the repo or org secret `MODELS_TOKEN`.
+| `provider:` | Cost | Required secret |
+| --- | --- | --- |
+| `github-models` *(default)* | free | `MODELS_TOKEN` (a `models: read` PAT — the repo `GITHUB_TOKEN` isn't always enough for org / fork PR contexts) |
+| `gemini` | free | `GEMINI_API_KEY` (Google AI Studio) |
+| `anthropic` | **paid** | `ANTHROPIC_API_KEY` |
+
+See [`docs/llm-providers.md`](docs/llm-providers.md) for the comparison and
+rationale. Switching is a one-line change in the consumer caller.
 
 ## Local smoke test
 

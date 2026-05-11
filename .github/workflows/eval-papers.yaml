@@ -28,9 +28,13 @@ on:
         type: number
         default: 0
       model:
-        description: "GitHub Models model id used for both relevance and extraction."
+        description: "Model id used for both relevance and extraction. Format depends on the provider (e.g. 'openai/gpt-4o-mini' for github-models, 'gemini-2.5-flash-lite' for gemini, 'claude-haiku-4-5' for anthropic)."
         type: string
         default: openai/gpt-4o-mini
+      provider:
+        description: "Classifier backend: github-models | gemini | anthropic. Default github-models is free; gemini is the designated free-tier backup; anthropic is paid, opt-in only."
+        type: string
+        default: github-models
       enrich:
         description: "If true, fetch abstracts from the rxiv API and run the structured-extraction prompt."
         type: boolean
@@ -54,11 +58,21 @@ on:
     secrets:
       models-token:
         description: >-
-          Token with `models: read` permission for GitHub Models. Required.
-          A fine-grained PAT or org-scoped token works; the default GITHUB_TOKEN
-          on `pull_request` from forks (and some org policies) cannot call
-          GitHub Models, hence the explicit secret.
-        required: true
+          Token with `models: read` permission for GitHub Models. Required
+          when provider=github-models. A fine-grained PAT or org-scoped
+          token works; the default GITHUB_TOKEN on `pull_request` from
+          forks (and some org policies) cannot call GitHub Models, hence
+          the explicit secret.
+        required: false
+      gemini-api-key:
+        description: >-
+          Google AI Studio API key. Required when provider=gemini.
+        required: false
+      anthropic-api-key:
+        description: >-
+          Anthropic API key. Required when provider=anthropic.
+          Paid provider; opt-in only.
+        required: false
     outputs:
       relevant_count:
         description: "Number of papers that passed the relevance filter."
@@ -89,12 +103,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        with:
+          enable-cache: true
+
+      - name: Install deps
+        run: uv sync --no-dev
+
       - name: Run evaluation
         id: run
         env:
-          # Used for both `gh api` (feed fetch) and the GitHub Models REST
-          # POST inside the script. Must carry `models: read`.
+          # GH_TOKEN serves the `gh api` feed fetch and, when
+          # provider=github-models, the inference REST POST.
           GH_TOKEN: ${{ secrets.models-token }}
+          GEMINI_API_KEY: ${{ secrets.gemini-api-key }}
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic-api-key }}
           INPUT_TOPIC: ${{ inputs.topic }}
           INPUT_SERVER: ${{ inputs.server }}
           INPUT_YEAR: ${{ inputs.year }}
@@ -102,6 +126,7 @@ jobs:
           INPUT_CATEGORIES: ${{ inputs.categories }}
           INPUT_MAX_PAPERS: ${{ inputs.max_papers }}
           INPUT_MODEL: ${{ inputs.model }}
+          INPUT_PROVIDER: ${{ inputs.provider }}
           INPUT_ENRICH: ${{ inputs.enrich }}
           INPUT_FEED_REPO: ${{ inputs.feed_repo }}
           RELEVANCE_PROMPT: ${{ inputs.relevance_prompt }}
@@ -113,6 +138,7 @@ jobs:
             --server "$INPUT_SERVER"
             --topic "$INPUT_TOPIC"
             --model "$INPUT_MODEL"
+            --provider "$INPUT_PROVIDER"
             --max-papers "$INPUT_MAX_PAPERS"
             --output-dir output
           )
@@ -121,7 +147,7 @@ jobs:
           [[ -n "$INPUT_CATEGORIES" ]] && args+=(--categories "$INPUT_CATEGORIES")
           [[ "$INPUT_ENRICH" == "true" ]] && args+=(--enrich)
 
-          python scripts/eval_papers.py "${args[@]}"
+          uv run python scripts/eval_papers.py "${args[@]}"
 
           relevant=$(python -c "import csv; print(sum(1 for _ in csv.reader(open('output/relevant.csv'))) - 1)")
           echo "relevant_count=${relevant}" >> "$GITHUB_OUTPUT"

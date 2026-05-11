@@ -112,9 +112,26 @@ publicly-posted preprint titles + abstracts.
 - **HuggingFace** if we want to evaluate domain-specific fine-tunes (e.g.
   BioGPT-style biomedical models not on GitHub Models).
 
+## Pluggable backends (as of the Classifier refactor)
+
+The workflow's `provider:` input selects the classifier backend at call time.
+Adding a new provider = one ~30 LOC subclass of `Classifier`
+(`scripts/classifiers.py`); the shared retry/backoff + offline-stub
+scaffolding lives in the base class.
+
+| Provider | `provider:` value | Cost | Secret |
+| --- | --- | --- | --- |
+| GitHub Models *(default)* | `github-models` | free | `models-token` |
+| Google AI Studio | `gemini` | free (designated backup) | `gemini-api-key` |
+| Anthropic Claude | `anthropic` | **paid; opt-in only** | `anthropic-api-key` |
+
+The Anthropic backend exists for cases where Lambda-Biolab is willing to pay
+for the call (cross-model audit, higher accuracy on borderline papers — see
+the Haiku → Sonnet funnel proposal in the tracking issues). Default behavior
+stays free.
+
 ## What's *not* on the table
 
-- **Anthropic Claude / OpenAI direct.** Not free. If/when we want them,
-  Lambda-Biolab pays for the API key and we add it as an alternate provider —
-  but that's a different conversation than "free providers".
+- **OpenAI direct.** Not free, and GitHub Models already exposes OpenAI's
+  models on a generous quota.
 - **Self-hosted.** Not justified at this scale (≤ 200 calls/week).

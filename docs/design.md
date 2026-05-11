@@ -45,7 +45,8 @@ for the authoritative list. Highlights:
 | `year` / `week` | current ISO | UTC. Override for backfills. |
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
 | `max_papers` | 0 | 0 = no cap. |
-| `model` | `openai/gpt-4o-mini` | Any GitHub Models–supported id. |
+| `provider` | `github-models` | Classifier backend: `github-models`, `gemini`, `anthropic`. |
+| `model` | `openai/gpt-4o-mini` | Format depends on `provider` (e.g. `gemini-2.5-flash-lite`, `claude-haiku-4-5`). |
 | `enrich` | `true` | Toggles the abstract fetch + extraction pass. |
 | `relevance_prompt` / `extraction_prompt` | "" | Override the defaults. |
 
@@ -55,14 +56,18 @@ Outputs:
 - `artifact_name` (string) — the artifact uploaded by the job, for downstream
   jobs to download.
 
-Secrets:
+Secrets (all optional at the workflow level; one is required per provider at
+runtime):
 
-- `models-token` (required) — a token with `models: read` scope. Provider:
-  GitHub Models. The default `GITHUB_TOKEN` is **not** sufficient for some
-  org policies / fork PR contexts, so the workflow forces consumers to pass
-  one explicitly. Store as `MODELS_TOKEN` in the consumer repo's secrets and
-  forward via `secrets: models-token: ${{ secrets.MODELS_TOKEN }}` on the
-  `uses:` block.
+- `models-token` — a token with `models: read` scope. Required when
+  `provider: github-models` (the default). The repo `GITHUB_TOKEN` is not
+  always sufficient (org policies, fork PRs), so the workflow accepts it as
+  an explicit secret. Store as `MODELS_TOKEN` and forward via
+  `secrets: models-token: ${{ secrets.MODELS_TOKEN }}`.
+- `gemini-api-key` — Google AI Studio API key. Required when
+  `provider: gemini`.
+- `anthropic-api-key` — Anthropic API key. Required when
+  `provider: anthropic`. Paid provider; opt-in only.
 
 ## Determinism
 

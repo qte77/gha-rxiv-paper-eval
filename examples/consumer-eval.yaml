@@ -33,13 +33,23 @@ jobs:
       week: ${{ inputs.week }}
       categories: "microbiology,bioinformatics,synthetic biology,pharmacology and toxicology"
       max_papers: 0
+      # Default backend: GitHub Models (free). Swap to gemini or anthropic by
+      # setting `provider:` and the matching `model:` below.
+      provider: github-models
       model: openai/gpt-4o-mini
+      # provider: gemini
+      # model: gemini-2.5-flash-lite
+      # provider: anthropic         # paid; opt-in only
+      # model: claude-haiku-4-5
       enrich: true
     secrets:
-      # Org/user secret holding a token with `models: read`. Create via
-      # Settings -> Developer settings -> Personal access tokens (fine-grained)
-      # and store as a repo or org secret named MODELS_TOKEN.
+      # Required when provider=github-models. Org/user secret holding a token
+      # with `models: read`. Create via Settings -> Developer settings ->
+      # Personal access tokens (fine-grained) and store as a repo or org
+      # secret named MODELS_TOKEN.
       models-token: ${{ secrets.MODELS_TOKEN }}
+      # gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+      # anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   triage:
     needs: eval
