@@ -3,13 +3,10 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import urllib.error
 from unittest.mock import patch
 
 import pytest
-
-import classifiers
 from classifiers import (
     AnthropicClassifier,
     Classifier,

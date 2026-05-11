@@ -29,7 +29,10 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Callable, Literal
+
+if TYPE_CHECKING:
+    from classifiers import Classifier
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -109,6 +112,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--week", default="")
     p.add_argument("--topic", required=True)
     p.add_argument("--model", default="openai/gpt-4o-mini")
+    p.add_argument(
+        "--provider",
+        default="github-models",
+        help="Classifier backend: github-models | gemini | anthropic",
+    )
     p.add_argument("--categories", default="")
     p.add_argument("--max-papers", type=int, default=0)
     p.add_argument("--enrich", action="store_true")
@@ -236,43 +244,21 @@ def _with_retry(call: Callable[[], str], settings: Settings) -> str:
     )
 
 
-def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    payload = {
-        "model": model,
-        "temperature": 0,
-        "max_tokens": max_tokens,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    }
-    req = urllib.request.Request(
-        GITHUB_MODELS_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = json.load(resp)
-    return body["choices"][0]["message"]["content"]
-
-
 def gh_models_rest(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
     """POST to GitHub Models REST and return the assistant message content.
 
-    Retries 429/5xx and transient network errors with exponential backoff.
-    Honors RXIV_EVAL_OFFLINE=1 to skip the network entirely (returns a stub).
+    Kept as a thin shim for backward compatibility — internally dispatches to
+    ``GitHubModelsClassifier.classify``. New code should prefer building a
+    ``Classifier`` via ``get_classifier(provider)`` and calling ``classify``
+    directly.
     """
-    settings = Settings()
-    if settings.offline:
-        return _with_retry(lambda: _stub_response(user_prompt), settings)
-    return _with_retry(
-        lambda: _github_models_call(model, system_prompt, user_prompt, max_tokens),
-        settings,
+    from classifiers import GitHubModelsClassifier
+
+    return GitHubModelsClassifier().classify(
+        model=model,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_tokens=max_tokens,
     )
 
 
@@ -283,6 +269,7 @@ def is_relevant(
     model: str,
     system_prompt: str,
     output_dir: Path | None = None,
+    classifier: "Classifier | None" = None,
 ) -> bool:
     use_cache = output_dir is not None and not Settings().no_cache
     if use_cache:
@@ -295,7 +282,12 @@ def is_relevant(
         f"Category: {paper.category}\n\n"
         f"Abstract: {abstract or '(unavailable)'}"
     )
-    raw = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
+    if classifier is None:
+        raw = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
+    else:
+        raw = classifier.classify(
+            model=model, system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=4
+        )
     relevant = raw.strip().upper().startswith("YES")
 
     if use_cache:
@@ -323,10 +315,21 @@ def fetch_abstract(server: str, doi: str) -> str:
     return collection[0].get("abstract", "") or ""
 
 
-def extract_fields(abstract: str, *, model: str, system_prompt: str) -> ExtractedFields:
+def extract_fields(
+    abstract: str,
+    *,
+    model: str,
+    system_prompt: str,
+    classifier: "Classifier | None" = None,
+) -> ExtractedFields:
     if not abstract:
         return ExtractedFields()
-    raw = gh_models_rest(model, system_prompt, abstract, max_tokens=512)
+    if classifier is None:
+        raw = gh_models_rest(model, system_prompt, abstract, max_tokens=512)
+    else:
+        raw = classifier.classify(
+            model=model, system_prompt=system_prompt, user_prompt=abstract, max_tokens=512
+        )
     try:
         return ExtractedFields.model_validate_json(raw)
     except ValidationError:
@@ -378,6 +381,7 @@ def _run_relevance_pass(
     model: str,
     relevance_prompt: str,
     output_dir: Path,
+    classifier: "Classifier",
 ) -> list[tuple[Paper, str]]:
     relevant: list[tuple[Paper, str]] = []
     total = len(papers)
@@ -390,6 +394,7 @@ def _run_relevance_pass(
                 model=model,
                 system_prompt=relevance_prompt,
                 output_dir=output_dir,
+                classifier=classifier,
             )
         except RuntimeError as exc:
             print(f"WARN: relevance call failed for {paper.doi}: {exc}", file=sys.stderr)
@@ -406,12 +411,18 @@ def _run_extraction_pass(
     *,
     model: str,
     output_dir: Path,
+    classifier: "Classifier",
 ) -> None:
     extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or DEFAULT_EXTRACTION_PROMPT
     with (output_dir / "extracts.jsonl").open("w") as f:
         for paper, abstract in relevant:
             try:
-                fields = extract_fields(abstract, model=model, system_prompt=extraction_prompt)
+                fields = extract_fields(
+                    abstract,
+                    model=model,
+                    system_prompt=extraction_prompt,
+                    classifier=classifier,
+                )
             except RuntimeError as exc:
                 print(f"WARN: extract failed for {paper.doi}: {exc}", file=sys.stderr)
                 fields = ExtractedFields()
@@ -442,6 +453,10 @@ def main() -> int:
     papers = _prefilter(papers, args.categories, args.max_papers)
     after_prefilter = len(papers)
 
+    from classifiers import get_classifier  # local import avoids circularity
+
+    classifier = get_classifier(args.provider)
+
     relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(
         topic=args.topic
     )
@@ -451,12 +466,15 @@ def main() -> int:
         model=args.model,
         relevance_prompt=relevance_prompt,
         output_dir=output_dir,
+        classifier=classifier,
     )
 
     write_papers([p for p, _ in relevant], output_dir / "relevant.csv")
 
     if args.enrich and relevant:
-        _run_extraction_pass(relevant, model=args.model, output_dir=output_dir)
+        _run_extraction_pass(
+            relevant, model=args.model, output_dir=output_dir, classifier=classifier
+        )
 
     write_summary(
         output_dir,

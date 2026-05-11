@@ -360,7 +360,7 @@ class ExtractFieldsErrorIsCaughtTests(unittest.TestCase):
 
             call_count = {"n": 0}
 
-            def fake_extract_fields(abstract, *, model, system_prompt):
+            def fake_extract_fields(abstract, *, model, system_prompt, classifier=None):
                 call_count["n"] += 1
                 if call_count["n"] == 1:
                     raise RuntimeError("simulated 429")
