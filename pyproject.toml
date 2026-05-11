@@ -7,9 +7,17 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+]
 
 [dependency-groups]
-dev = ["pytest>=9.0.3", "ruff>=0.9"]
+dev = [
+    "complexipy>=4.0",
+    "pytest>=9.0.3",
+    "ruff>=0.9",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -21,3 +29,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.complexipy]
+max-complexity-allowed = 10
+quiet = false

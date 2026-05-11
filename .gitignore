@@ -23,3 +23,6 @@ Thumbs.db
 
 # Eval script local outputs
 output/
+
+# Lychee link checker cache
+.lycheecache
