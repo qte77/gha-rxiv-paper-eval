@@ -273,7 +273,10 @@ class OfflineStubTests(unittest.TestCase):
 
     def test_offline_yes_mode_returns_yes(self) -> None:
         with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "yes"}):
-            with patch("urllib.request.urlopen", side_effect=AssertionError("urlopen called in offline mode")):
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=AssertionError("urlopen called in offline mode"),
+            ):
                 result = eval_papers.gh_models_rest(
                     model="m", system_prompt="s", user_prompt="anything", max_tokens=4
                 )
@@ -281,7 +284,10 @@ class OfflineStubTests(unittest.TestCase):
 
     def test_offline_no_mode_returns_no(self) -> None:
         with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "no"}):
-            with patch("urllib.request.urlopen", side_effect=AssertionError("urlopen called in offline mode")):
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=AssertionError("urlopen called in offline mode"),
+            ):
                 result = eval_papers.gh_models_rest(
                     model="m", system_prompt="s", user_prompt="anything", max_tokens=4
                 )
@@ -330,7 +336,7 @@ _FIXTURE_FEED = """\
 Date,ISOWeek,DOI,Version,Category,Title,Authors
 2026-04-06,15,10.1101/2024.09.07.000001,1,microbiology,Paper one about bacterial enzymes,Smith J.
 2026-04-06,15,10.1101/2024.09.07.000002,1,microbiology,Paper two about membrane transporters,Jones A.
-"""
+"""  # noqa: E501
 
 
 class ExtractFieldsErrorIsCaughtTests(unittest.TestCase):
@@ -358,7 +364,7 @@ class ExtractFieldsErrorIsCaughtTests(unittest.TestCase):
                 call_count["n"] += 1
                 if call_count["n"] == 1:
                     raise RuntimeError("simulated 429")
-                return {"summary": "ok"}
+                return eval_papers.ExtractedFields(summary="ok")
 
             def fake_fetch_feed(feed_repo, server, year, week, dest):
                 # feed.csv already written above; nothing to do
@@ -378,13 +384,20 @@ class ExtractFieldsErrorIsCaughtTests(unittest.TestCase):
                     "--enrich",
                     "--output-dir", str(out),
                 ]
-                with patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed):
-                    with patch.object(eval_papers, "fetch_abstract", side_effect=fake_fetch_abstract):
-                        with patch.object(eval_papers, "extract_fields", side_effect=fake_extract_fields):
-                            import io as _io
-                            stderr_capture = _io.StringIO()
-                            with patch("sys.stderr", stderr_capture):
-                                rc = eval_papers.main()
+                fetch_feed_patch = patch.object(
+                    eval_papers, "fetch_feed", side_effect=fake_fetch_feed
+                )
+                fetch_abstract_patch = patch.object(
+                    eval_papers, "fetch_abstract", side_effect=fake_fetch_abstract
+                )
+                extract_fields_patch = patch.object(
+                    eval_papers, "extract_fields", side_effect=fake_extract_fields
+                )
+                with fetch_feed_patch, fetch_abstract_patch, extract_fields_patch:
+                    import io as _io
+                    stderr_capture = _io.StringIO()
+                    with patch("sys.stderr", stderr_capture):
+                        rc = eval_papers.main()
             finally:
                 sys.argv = saved_argv
 

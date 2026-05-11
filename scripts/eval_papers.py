@@ -9,7 +9,7 @@ Pipeline:
        -> extracts.jsonl.
     5. Write summary.md.
 
-Designed to be invoked from .github/workflows/eval-papers.yaml. Stdlib only.
+Designed to be invoked from .github/workflows/eval-papers.yaml.
 External services: `gh` CLI for the feed-CSV fetch (uses GH_TOKEN), and a
 direct HTTPS POST to https://models.github.ai/inference/chat/completions for
 inference (also uses GH_TOKEN; requires the `models: read` scope).
@@ -28,8 +28,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Callable, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_RELEVANCE_PROMPT = (
     "You are a strict relevance classifier. "
@@ -42,45 +45,60 @@ DEFAULT_EXTRACTION_PROMPT = (
     "Extract structured fields from the abstract. "
     "Return ONLY a JSON object with these keys: "
     "summary (one sentence), organisms (list[str]), methods (list[str]), "
-    "key_findings (list[str]), study_type (one of: in_silico, in_vitro, in_vivo, clinical, review, other). "
+    "key_findings (list[str]), study_type "
+    "(one of: in_silico, in_vitro, in_vivo, clinical, review, other). "
     "If a field is unknown, use an empty string or empty list."
 )
 
 RXIV_DETAILS_URL = "https://api.biorxiv.org/details/{server}/{doi}"
+GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
+RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+
+StudyType = Literal["in_silico", "in_vitro", "in_vivo", "clinical", "review", "other"]
 
 
-@dataclass
-class Paper:
-    date: str
-    iso_week: str
+class Settings(BaseSettings):
+    """Process-wide knobs sourced from RXIV_EVAL_* env vars."""
+
+    model_config = SettingsConfigDict(env_prefix="RXIV_EVAL_", case_sensitive=False)
+    offline: bool = False
+    stub_mode: str = "hash"
+    retry_max_attempts: int = 5
+    retry_base_secs: float = 4.0
+    no_cache: bool = False
+
+
+class Paper(BaseModel):
+    """One row of the producer's weekly CSV. CSV column names are the aliases."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    date: str = Field(alias="Date")
+    iso_week: str = Field(alias="ISOWeek")
+    doi: str = Field(alias="DOI")
+    version: str = Field(alias="Version")
+    category: str = Field(alias="Category")
+    title: str = Field(alias="Title")
+    authors: str = Field(alias="Authors")
+
+
+class Verdict(BaseModel):
+    """Per-paper relevance result; also the DOI-cache payload schema."""
+
     doi: str
-    version: str
-    category: str
-    title: str
-    authors: str
+    relevant: bool
+    raw: str
 
-    @classmethod
-    def from_row(cls, row: dict[str, str]) -> "Paper":
-        return cls(
-            date=row["Date"],
-            iso_week=row["ISOWeek"],
-            doi=row["DOI"],
-            version=row["Version"],
-            category=row["Category"],
-            title=row["Title"],
-            authors=row["Authors"],
-        )
 
-    def as_row(self) -> dict[str, str]:
-        return {
-            "Date": self.date,
-            "ISOWeek": self.iso_week,
-            "DOI": self.doi,
-            "Version": self.version,
-            "Category": self.category,
-            "Title": self.title,
-            "Authors": self.authors,
-        }
+class ExtractedFields(BaseModel):
+    """Structured extraction output. extra='allow' preserves model-returned
+    unknown keys (e.g. a fallback _raw blob when parsing fails)."""
+
+    model_config = ConfigDict(extra="allow")
+    summary: str = ""
+    organisms: list[str] = Field(default_factory=list)
+    methods: list[str] = Field(default_factory=list)
+    key_findings: list[str] = Field(default_factory=list)
+    study_type: StudyType = "other"
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,15 +140,14 @@ def fetch_feed(feed_repo: str, server: str, year: str, week: str, dest: Path) ->
     )
     if proc.returncode != 0:
         raise SystemExit(
-            f"Failed to fetch {feed_repo}:{path}\n"
-            f"stderr: {proc.stderr.strip()}"
+            f"Failed to fetch {feed_repo}:{path}\nstderr: {proc.stderr.strip()}"
         )
     dest.write_text(proc.stdout)
 
 
 def load_papers(csv_path: Path) -> list[Paper]:
     with csv_path.open(newline="") as f:
-        return [Paper.from_row(row) for row in csv.DictReader(f)]
+        return [Paper.model_validate(row) for row in csv.DictReader(f)]
 
 
 def write_papers(papers: list[Paper], dest: Path) -> None:
@@ -139,17 +156,12 @@ def write_papers(papers: list[Paper], dest: Path) -> None:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         for paper in papers:
-            w.writerow(paper.as_row())
-
-
-GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
-
-RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+            w.writerow(paper.model_dump(by_alias=True))
 
 
 def _stub_response(user_prompt: str) -> str:
     """Offline stub for tests/local dev. Mode chosen by RXIV_EVAL_STUB_MODE."""
-    mode = os.environ.get("RXIV_EVAL_STUB_MODE", "hash")
+    mode = Settings().stub_mode
     if mode == "yes":
         return "YES"
     if mode == "no":
@@ -174,20 +186,79 @@ def _cache_path(output_dir: Path, doi: str) -> Path:
     return output_dir / ".cache" / f"{_sanitize_doi(doi)}.json"
 
 
-def _cache_load(output_dir: Path, doi: str) -> dict | None:
+def _cache_load(output_dir: Path, doi: str) -> Verdict | None:
     path = _cache_path(output_dir, doi)
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text())
-    except json.JSONDecodeError:
+        return Verdict.model_validate_json(path.read_text())
+    except (ValidationError, json.JSONDecodeError):
         return None
 
 
-def _cache_save(output_dir: Path, doi: str, payload: dict) -> None:
-    path = _cache_path(output_dir, doi)
+def _cache_save(output_dir: Path, verdict: Verdict) -> None:
+    path = _cache_path(output_dir, verdict.doi)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False))
+    path.write_text(verdict.model_dump_json())
+
+
+def _attempt(call: Callable[[], str]) -> tuple[str | None, int | None, str | None]:
+    """Run ``call`` once. Return (result, None, None) on success, or
+    (None, code, msg) on retryable failure. Non-retryable HTTPErrors raise."""
+    try:
+        return call(), None, None
+    except urllib.error.HTTPError as exc:
+        if exc.code not in RETRYABLE_HTTP_CODES:
+            detail = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+            raise RuntimeError(
+                f"GitHub Models HTTP {exc.code}: {detail.strip()}"
+            ) from exc
+        return None, exc.code, f"HTTP {exc.code}"
+    except urllib.error.URLError as exc:
+        return None, None, f"network error: {exc.reason}"
+
+
+def _with_retry(call: Callable[[], str], settings: Settings) -> str:
+    """Run ``call``, retrying on retryable HTTP/URL errors. Reusable across backends."""
+    last_code: int | None = None
+    last_err: str | None = None
+    for attempt in range(settings.retry_max_attempts):
+        result, last_code, last_err = _attempt(call)
+        if result is not None:
+            return result
+        if attempt + 1 < settings.retry_max_attempts:
+            time.sleep(settings.retry_base_secs * (2 ** attempt))
+
+    code_str = str(last_code) if last_code is not None else "network"
+    raise RuntimeError(
+        f"GitHub Models {code_str}: gave up after "
+        f"{settings.retry_max_attempts} attempts ({last_err})"
+    )
+
+
+def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    req = urllib.request.Request(
+        GITHUB_MODELS_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = json.load(resp)
+    return body["choices"][0]["message"]["content"]
 
 
 def gh_models_rest(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
@@ -196,59 +267,12 @@ def gh_models_rest(model: str, system_prompt: str, user_prompt: str, max_tokens:
     Retries 429/5xx and transient network errors with exponential backoff.
     Honors RXIV_EVAL_OFFLINE=1 to skip the network entirely (returns a stub).
     """
-    max_attempts = int(os.environ.get("RXIV_EVAL_RETRY_MAX_ATTEMPTS", "5"))
-    base = float(os.environ.get("RXIV_EVAL_RETRY_BASE_SECS", "4.0"))
-    offline = os.environ.get("RXIV_EVAL_OFFLINE") == "1"
-
-    def _do_call() -> str:
-        if offline:
-            return _stub_response(user_prompt)
-        payload = {
-            "model": model,
-            "temperature": 0,
-            "max_tokens": max_tokens,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
-        req = urllib.request.Request(
-            GITHUB_MODELS_URL,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = json.load(resp)
-        return body["choices"][0]["message"]["content"]
-
-    last_code: int | None = None
-    last_err: str | None = None
-
-    for attempt in range(max_attempts):
-        try:
-            return _do_call()
-        except urllib.error.HTTPError as exc:
-            if exc.code not in RETRYABLE_HTTP_CODES:
-                detail = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-                raise RuntimeError(
-                    f"GitHub Models HTTP {exc.code}: {detail.strip()}"
-                ) from exc
-            last_code = exc.code
-            last_err = f"HTTP {exc.code}"
-        except urllib.error.URLError as exc:
-            last_err = f"network error: {exc.reason}"
-
-        if attempt + 1 < max_attempts:
-            time.sleep(base * (2 ** attempt))
-
-    code_str = str(last_code) if last_code is not None else "network"
-    raise RuntimeError(
-        f"GitHub Models {code_str}: gave up after {max_attempts} attempts ({last_err})"
+    settings = Settings()
+    if settings.offline:
+        return _with_retry(lambda: _stub_response(user_prompt), settings)
+    return _with_retry(
+        lambda: _github_models_call(model, system_prompt, user_prompt, max_tokens),
+        settings,
     )
 
 
@@ -260,35 +284,31 @@ def is_relevant(
     system_prompt: str,
     output_dir: Path | None = None,
 ) -> bool:
-    cache_dir: Path | None = output_dir
-    if os.environ.get("RXIV_EVAL_NO_CACHE") == "1":
-        cache_dir = None
-
-    if cache_dir is not None:
-        cached = _cache_load(cache_dir, paper.doi)
+    use_cache = output_dir is not None and not Settings().no_cache
+    if use_cache:
+        cached = _cache_load(output_dir, paper.doi)  # type: ignore[arg-type]
         if cached is not None:
-            return bool(cached.get("relevant"))
+            return cached.relevant
 
     user_prompt = (
         f"Title: {paper.title}\n"
         f"Category: {paper.category}\n\n"
         f"Abstract: {abstract or '(unavailable)'}"
     )
-    verdict = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
-    relevant = verdict.strip().upper().startswith("YES")
+    raw = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
+    relevant = raw.strip().upper().startswith("YES")
 
-    if cache_dir is not None:
+    if use_cache:
         _cache_save(
-            cache_dir,
-            paper.doi,
-            {"doi": paper.doi, "relevant": relevant, "raw": verdict},
+            output_dir,  # type: ignore[arg-type]
+            Verdict(doi=paper.doi, relevant=relevant, raw=raw),
         )
 
     return relevant
 
 
 def fetch_abstract(server: str, doi: str) -> str:
-    if os.environ.get("RXIV_EVAL_OFFLINE") == "1":
+    if Settings().offline:
         return ""
     url = RXIV_DETAILS_URL.format(server=server, doi=doi)
     try:
@@ -303,15 +323,14 @@ def fetch_abstract(server: str, doi: str) -> str:
     return collection[0].get("abstract", "") or ""
 
 
-def extract_fields(abstract: str, *, model: str, system_prompt: str) -> dict:
+def extract_fields(abstract: str, *, model: str, system_prompt: str) -> ExtractedFields:
     if not abstract:
-        return {}
+        return ExtractedFields()
     raw = gh_models_rest(model, system_prompt, abstract, max_tokens=512)
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        # Tolerate prose responses; surface the raw payload for debugging.
-        return {"_raw": raw}
+        return ExtractedFields.model_validate_json(raw)
+    except ValidationError:
+        return ExtractedFields.model_validate({"_raw": raw})
 
 
 def write_summary(
@@ -341,6 +360,69 @@ def write_summary(
     (output_dir / "summary.md").write_text("\n".join(lines) + "\n")
 
 
+def _prefilter(papers: list[Paper], categories: str, max_papers: int) -> list[Paper]:
+    if categories:
+        allow = {c.strip().lower() for c in categories.split(",") if c.strip()}
+        papers = [p for p in papers if p.category.lower() in allow]
+        print(f"After category filter ({sorted(allow)}): {len(papers)}", file=sys.stderr)
+    if max_papers and len(papers) > max_papers:
+        papers = papers[:max_papers]
+        print(f"Capped to first {max_papers}", file=sys.stderr)
+    return papers
+
+
+def _run_relevance_pass(
+    papers: list[Paper],
+    *,
+    server: str,
+    model: str,
+    relevance_prompt: str,
+    output_dir: Path,
+) -> list[tuple[Paper, str]]:
+    relevant: list[tuple[Paper, str]] = []
+    total = len(papers)
+    for i, paper in enumerate(papers, 1):
+        abstract = fetch_abstract(server, paper.doi)
+        try:
+            keep = is_relevant(
+                paper,
+                abstract,
+                model=model,
+                system_prompt=relevance_prompt,
+                output_dir=output_dir,
+            )
+        except RuntimeError as exc:
+            print(f"WARN: relevance call failed for {paper.doi}: {exc}", file=sys.stderr)
+            continue
+        marker = "YES" if keep else "no "
+        print(f"[{i}/{total}] {marker} {paper.doi} {paper.title[:80]}", file=sys.stderr)
+        if keep:
+            relevant.append((paper, abstract))
+    return relevant
+
+
+def _run_extraction_pass(
+    relevant: list[tuple[Paper, str]],
+    *,
+    model: str,
+    output_dir: Path,
+) -> None:
+    extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or DEFAULT_EXTRACTION_PROMPT
+    with (output_dir / "extracts.jsonl").open("w") as f:
+        for paper, abstract in relevant:
+            try:
+                fields = extract_fields(abstract, model=model, system_prompt=extraction_prompt)
+            except RuntimeError as exc:
+                print(f"WARN: extract failed for {paper.doi}: {exc}", file=sys.stderr)
+                fields = ExtractedFields()
+            record = {
+                **paper.model_dump(),
+                "abstract": abstract,
+                "extracted": fields.model_dump(),
+            }
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir)
@@ -357,55 +439,24 @@ def main() -> int:
     total = len(papers)
     print(f"Loaded {total} papers", file=sys.stderr)
 
-    if args.categories:
-        allow = {c.strip().lower() for c in args.categories.split(",") if c.strip()}
-        papers = [p for p in papers if p.category.lower() in allow]
-        print(f"After category filter ({sorted(allow)}): {len(papers)}", file=sys.stderr)
-
-    if args.max_papers and len(papers) > args.max_papers:
-        papers = papers[: args.max_papers]
-        print(f"Capped to first {args.max_papers}", file=sys.stderr)
-
+    papers = _prefilter(papers, args.categories, args.max_papers)
     after_prefilter = len(papers)
 
     relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(
         topic=args.topic
     )
-
-    relevant: list[tuple[Paper, str]] = []
-    for i, paper in enumerate(papers, 1):
-        abstract = fetch_abstract(args.server, paper.doi)
-        try:
-            keep = is_relevant(
-                paper,
-                abstract,
-                model=args.model,
-                system_prompt=relevance_prompt,
-                output_dir=output_dir,
-            )
-        except RuntimeError as exc:
-            print(f"WARN: relevance call failed for {paper.doi}: {exc}", file=sys.stderr)
-            continue
-        marker = "YES" if keep else "no "
-        print(f"[{i}/{after_prefilter}] {marker} {paper.doi} {paper.title[:80]}", file=sys.stderr)
-        if keep:
-            relevant.append((paper, abstract))
+    relevant = _run_relevance_pass(
+        papers,
+        server=args.server,
+        model=args.model,
+        relevance_prompt=relevance_prompt,
+        output_dir=output_dir,
+    )
 
     write_papers([p for p, _ in relevant], output_dir / "relevant.csv")
 
     if args.enrich and relevant:
-        extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or DEFAULT_EXTRACTION_PROMPT
-        with (output_dir / "extracts.jsonl").open("w") as f:
-            for paper, abstract in relevant:
-                try:
-                    fields = extract_fields(
-                        abstract, model=args.model, system_prompt=extraction_prompt
-                    )
-                except RuntimeError as exc:
-                    print(f"WARN: extract failed for {paper.doi}: {exc}", file=sys.stderr)
-                    fields = {}
-                record = {**asdict(paper), "abstract": abstract, "extracted": fields}
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        _run_extraction_pass(relevant, model=args.model, output_dir=output_dir)
 
     write_summary(
         output_dir,
