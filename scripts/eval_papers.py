@@ -504,7 +504,16 @@ def main() -> int:
     total = len(papers)
     print(f"Loaded {total} papers", file=sys.stderr)
 
-    papers = _prefilter(papers, args.categories, args.max_papers)
+    categories = args.categories
+    if args.server == "arxiv" and categories:
+        print(
+            "WARN: --categories ignored for --server=arxiv "
+            "(CSV has no Category column)",
+            file=sys.stderr,
+        )
+        categories = ""
+
+    papers = _prefilter(papers, categories, args.max_papers)
     after_prefilter = len(papers)
 
     relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(

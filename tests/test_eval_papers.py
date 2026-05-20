@@ -670,5 +670,85 @@ class LoadPapersServerDispatchTests(unittest.TestCase):
         self.assertFalse(papers[0].title.startswith("'"))
 
 
+# ---------------------------------------------------------------------------
+# CategoriesWarningWithArxivTests
+# ---------------------------------------------------------------------------
+
+
+class CategoriesWarningWithArxivTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env = patch.dict(
+            os.environ,
+            {
+                "GH_TOKEN": "fake-token",
+                "RXIV_EVAL_OFFLINE": "1",
+                "RXIV_EVAL_STUB_MODE": "hash",
+                "RXIV_EVAL_RETRY_BASE_SECS": "0.01",
+            },
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_main_warns_and_ignores_categories_for_arxiv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+
+            def fake_fetch_feed(feed_repo, server, year, week, dest):
+                shutil.copy(_FIXTURE_ARXIV_PATH, dest)
+
+            saved_argv = sys.argv[:]
+            try:
+                sys.argv = [
+                    "eval_papers.py",
+                    "--feed-repo", "any/repo",
+                    "--server", "arxiv",
+                    "--topic", "test",
+                    "--categories", "cs.LG",  # arxiv CSV has no Category column
+                    "--max-papers", "5",
+                    "--output-dir", str(out),
+                ]
+                with patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed):
+                    stderr_capture = io.StringIO()
+                    with patch("sys.stderr", stderr_capture):
+                        rc = eval_papers.main()
+            finally:
+                sys.argv = saved_argv
+
+            self.assertEqual(rc, 0)
+            stderr_output = stderr_capture.getvalue()
+            self.assertIn("--categories", stderr_output)
+            self.assertIn("arxiv", stderr_output)
+            # The 3 arxiv fixture rows must reach the relevance pass — none
+            # should be dropped by a phantom category prefilter.
+            self.assertIn("Loaded 3 papers", stderr_output)
+
+    def test_main_does_not_warn_when_no_categories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+
+            def fake_fetch_feed(feed_repo, server, year, week, dest):
+                shutil.copy(_FIXTURE_ARXIV_PATH, dest)
+
+            saved_argv = sys.argv[:]
+            try:
+                sys.argv = [
+                    "eval_papers.py",
+                    "--feed-repo", "any/repo",
+                    "--server", "arxiv",
+                    "--topic", "test",
+                    "--max-papers", "5",
+                    "--output-dir", str(out),
+                ]
+                with patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed):
+                    stderr_capture = io.StringIO()
+                    with patch("sys.stderr", stderr_capture):
+                        rc = eval_papers.main()
+            finally:
+                sys.argv = saved_argv
+
+            self.assertEqual(rc, 0)
+            self.assertNotIn("--categories", stderr_capture.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
