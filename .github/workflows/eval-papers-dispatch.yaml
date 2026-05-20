@@ -1,0 +1,67 @@
+name: Evaluate rxiv papers (manual)
+
+# Thin wrapper that exposes the reusable `eval-papers.yaml` workflow to the
+# Actions UI for IRL testing. The reusable job still checks out
+# Lambda-Biolab/gha-rxiv-paper-eval@<eval_repo_ref> internally, so push the
+# branch under test there and pass its ref via `eval_repo_ref`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "Free-text topic the relevance filter judges against."
+        type: string
+        required: true
+      server:
+        description: "Preprint server."
+        type: choice
+        options: [biorxiv, medrxiv]
+        default: biorxiv
+      year:
+        description: "ISO year (YYYY). Empty = current ISO year (UTC)."
+        type: string
+        default: ""
+      week:
+        description: "ISO week (1-53). Empty = current ISO week (UTC)."
+        type: string
+        default: ""
+      categories:
+        description: "Comma-separated category allowlist. Empty = no pre-filter."
+        type: string
+        default: ""
+      max_papers:
+        description: "Cap rows sent to the LLM. 0 = no cap."
+        type: number
+        default: 5
+      model:
+        description: "GitHub Models model id."
+        type: string
+        default: openai/gpt-4o-mini
+      enrich:
+        description: "Fetch abstracts and run the extraction prompt."
+        type: boolean
+        default: true
+      eval_repo_ref:
+        description: "Ref of Lambda-Biolab/gha-rxiv-paper-eval to check out."
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  models: read
+
+jobs:
+  eval:
+    uses: ./.github/workflows/eval-papers.yaml
+    with:
+      topic: ${{ inputs.topic }}
+      server: ${{ inputs.server }}
+      year: ${{ inputs.year }}
+      week: ${{ inputs.week }}
+      categories: ${{ inputs.categories }}
+      max_papers: ${{ fromJSON(inputs.max_papers) }}
+      model: ${{ inputs.model }}
+      enrich: ${{ fromJSON(inputs.enrich) }}
+      eval_repo_ref: ${{ inputs.eval_repo_ref }}
+    secrets:
+      models-token: ${{ secrets.MODELS_TOKEN }}
