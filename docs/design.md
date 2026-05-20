@@ -71,6 +71,47 @@ Secrets:
 - Extraction prompt asks for a fixed JSON schema; non-JSON responses are
   preserved verbatim under `_raw` for triage rather than dropped.
 
+## Servers and schema adapters
+
+| Server | Producer CSV columns | Abstract source |
+| --- | --- | --- |
+| `biorxiv`, `medrxiv` | `Date,ISOWeek,DOI,Version,Category,Title,Authors` | `https://api.biorxiv.org/details/{server}/{doi}` (JSON) |
+| `arxiv` | `Published,Weekday(Monday==0),Updated,ID,Version,Title` | `https://export.arxiv.org/api/query?id_list={id}` (Atom XML) |
+
+The arxiv producer CSV is missing `Category` and `Authors`, so `--categories`
+is a no-op for `--server=arxiv` (eval prints a WARN and resets the filter).
+A pydantic `ArxivCsvRow` model validates the raw row and `to_paper()` maps
+it onto the normalized `Paper` shape: arxiv id lands in `doi`, `iso_week` is
+derived from `Published`, and the single-quoted title is unquoted.
+
+### Why `defusedxml` for the arxiv Atom response
+
+The arxiv abstract endpoint returns Atom XML. Stdlib
+`xml.etree.ElementTree.fromstring` is vulnerable to known XML attacks
+(billion laughs, quadratic blowup; Python 3.7.1+ mitigates XXE only). The
+Python docs themselves recommend `defusedxml` as the canonical defense:
+<https://docs.python.org/3/library/xml.html#the-defusedxml-package>.
+Costs: one small pure-Python dep, no transitive deps, drop-in
+(`defusedxml.ElementTree.fromstring` matches stdlib's signature; same
+`ParseError`). Alternatives considered and rejected: `# nosec` (suppresses
+without fixing), custom hardening (reinvents the wheel), regex parsing
+(brittle).
+
+### Outbound HTTP chokepoint
+
+All non-Models GETs go through `_urlopen_bytes(url, timeout=15)`, which
+refuses non-`https://` schemes. This keeps a single Bandit B310 suppression
+site instead of sprinkling `# nosec` across every fetcher.
+
+### FIXME — XML dependency removable once producer normalizes
+
+The arxiv XML parse exists only because the producer CSV omits the abstract
+(and `Category`/`Authors`). If `qte77/gha-rxiv-feed-action` evolves to emit
+a unified normalized CSV that includes the abstract (and category)
+pre-fetched on the producer side, the eval action can drop both the Atom
+parse and the `defusedxml` dependency. Tracked alongside the producer
+schema-unification discussion.
+
 ## Why a separate eval repo (vs. living in the feed repo)
 
 - **Separation of concerns.** The feed action's job is to emit the CSV; eval

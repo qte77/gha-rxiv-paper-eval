@@ -28,10 +28,13 @@ import sys
 import time
 import urllib.error
 import urllib.request
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, Literal
 
+# FIXME: drop defusedxml + Atom parsing once the producer (gha-rxiv-feed-action)
+# emits a normalized arxiv CSV that already carries the abstract. See
+# docs/design.md "Servers and schema adapters".
+import defusedxml.ElementTree as ET
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -347,11 +350,20 @@ def is_relevant(
     return relevant
 
 
+def _urlopen_bytes(url: str, timeout: int = 15) -> bytes:
+    """Read the body of an HTTPS GET. Single chokepoint for outbound HTTP so
+    Bandit B310 is suppressed exactly once and callers cannot pass non-https.
+    """
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing non-https URL: {url!r}")
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310
+        return resp.read()
+
+
 def _fetch_arxiv_abstract(arxiv_id: str) -> str:
     url = ARXIV_QUERY_URL.format(arxiv_id=arxiv_id)
     try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
-            data = resp.read()
+        data = _urlopen_bytes(url)
     except urllib.error.URLError as exc:
         print(f"WARN: abstract fetch failed for {arxiv_id}: {exc}", file=sys.stderr)
         return ""
@@ -369,8 +381,7 @@ def _fetch_arxiv_abstract(arxiv_id: str) -> str:
 def _fetch_rxiv_abstract(server: str, doi: str) -> str:
     url = RXIV_DETAILS_URL.format(server=server, doi=doi)
     try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
-            payload = json.load(resp)
+        payload = json.loads(_urlopen_bytes(url))
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
         print(f"WARN: abstract fetch failed for {doi}: {exc}", file=sys.stderr)
         return ""
