@@ -590,6 +590,63 @@ class OfflineEndToEndTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# FetchAbstractArxivTests
+# ---------------------------------------------------------------------------
+
+
+class FetchAbstractArxivTests(unittest.TestCase):
+    _ATOM_PAYLOAD = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<feed xmlns="http://www.w3.org/2005/Atom">'
+        b'<entry>'
+        b'<id>http://arxiv.org/abs/2406.09418v1</id>'
+        b'<title>Some title</title>'
+        b'<summary>This is the abstract text.</summary>'
+        b'</entry>'
+        b'</feed>'
+    )
+
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {}, clear=False)
+        self._env.start()
+        os.environ.pop("RXIV_EVAL_OFFLINE", None)
+        self.addCleanup(self._env.stop)
+
+    def test_returns_summary_text_from_atom(self) -> None:
+        resp = io.BytesIO(self._ATOM_PAYLOAD)
+        with patch("urllib.request.urlopen", return_value=resp) as mock_open:
+            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
+        self.assertEqual(result, "This is the abstract text.")
+        called_with = mock_open.call_args.args[0]
+        url_str = called_with.full_url if hasattr(called_with, "full_url") else str(called_with)
+        self.assertIn("export.arxiv.org", url_str)
+        self.assertIn("2406.09418", url_str)
+
+    def test_returns_empty_on_offline(self) -> None:
+        with patch.dict(os.environ, {"RXIV_EVAL_OFFLINE": "1"}):
+            with patch(
+                "urllib.request.urlopen",
+                side_effect=AssertionError("urlopen must not fire in offline mode"),
+            ):
+                result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
+        self.assertEqual(result, "")
+
+    def test_parse_error_returns_empty_string(self) -> None:
+        resp = io.BytesIO(b"not xml at all")
+        with patch("urllib.request.urlopen", return_value=resp):
+            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
+        self.assertEqual(result, "")
+
+    def test_url_error_returns_empty_string(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError("transient"),
+        ):
+            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
+        self.assertEqual(result, "")
+
+
+# ---------------------------------------------------------------------------
 # LoadPapersServerDispatchTests
 # ---------------------------------------------------------------------------
 

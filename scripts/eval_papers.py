@@ -28,6 +28,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -51,6 +52,8 @@ DEFAULT_EXTRACTION_PROMPT = (
 )
 
 RXIV_DETAILS_URL = "https://api.biorxiv.org/details/{server}/{doi}"
+ARXIV_QUERY_URL = "https://export.arxiv.org/api/query?id_list={arxiv_id}"
+ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
@@ -344,9 +347,26 @@ def is_relevant(
     return relevant
 
 
-def fetch_abstract(server: str, doi: str) -> str:
-    if Settings().offline:
+def _fetch_arxiv_abstract(arxiv_id: str) -> str:
+    url = ARXIV_QUERY_URL.format(arxiv_id=arxiv_id)
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            data = resp.read()
+    except urllib.error.URLError as exc:
+        print(f"WARN: abstract fetch failed for {arxiv_id}: {exc}", file=sys.stderr)
         return ""
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as exc:
+        print(f"WARN: abstract parse failed for {arxiv_id}: {exc}", file=sys.stderr)
+        return ""
+    summary = root.find("atom:entry/atom:summary", ATOM_NS)
+    if summary is None or summary.text is None:
+        return ""
+    return summary.text.strip()
+
+
+def _fetch_rxiv_abstract(server: str, doi: str) -> str:
     url = RXIV_DETAILS_URL.format(server=server, doi=doi)
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
@@ -358,6 +378,14 @@ def fetch_abstract(server: str, doi: str) -> str:
     if not collection:
         return ""
     return collection[0].get("abstract", "") or ""
+
+
+def fetch_abstract(server: str, doi: str) -> str:
+    if Settings().offline:
+        return ""
+    if server == "arxiv":
+        return _fetch_arxiv_abstract(doi)
+    return _fetch_rxiv_abstract(server, doi)
 
 
 def extract_fields(abstract: str, *, model: str, system_prompt: str) -> ExtractedFields:
