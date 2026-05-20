@@ -15,7 +15,7 @@ on:
       server:
         description: "Preprint server."
         type: choice
-        options: [biorxiv, medrxiv]
+        options: [biorxiv, medrxiv, arxiv]
         default: biorxiv
       year:
         description: "ISO year (YYYY). Empty = current ISO year (UTC)."

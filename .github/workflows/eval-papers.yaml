@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       server:
-        description: "Preprint server: biorxiv or medrxiv."
+        description: "Preprint server: biorxiv, medrxiv, or arxiv."
         type: string
         default: biorxiv
       year:
