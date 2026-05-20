@@ -589,5 +589,29 @@ class OfflineEndToEndTests(unittest.TestCase):
             self.assertIn("DOI", lines[0])
 
 
+# ---------------------------------------------------------------------------
+# LoadPapersServerDispatchTests
+# ---------------------------------------------------------------------------
+
+_FIXTURE_ARXIV_PATH = pathlib.Path(__file__).parent / "fixtures" / "feed-arxiv-min.csv"
+
+
+class LoadPapersServerDispatchTests(unittest.TestCase):
+    def test_biorxiv_path_unchanged(self) -> None:
+        papers = eval_papers.load_papers(_FIXTURE_PATH, server="biorxiv")
+        # feed-min.csv has 10 rows
+        self.assertEqual(len(papers), 10)
+        self.assertTrue(all(p.doi.startswith(("10.1101/", "10.64898/")) for p in papers))
+
+    def test_arxiv_path_uses_arxiv_adapter(self) -> None:
+        papers = eval_papers.load_papers(_FIXTURE_ARXIV_PATH, server="arxiv")
+        self.assertEqual(len(papers), 3)
+        # arxiv IDs survive as the doi field
+        self.assertEqual(papers[0].doi, "2406.09418")
+        self.assertEqual(papers[0].iso_week, "24")
+        # title is unquoted
+        self.assertFalse(papers[0].title.startswith("'"))
+
+
 if __name__ == "__main__":
     unittest.main()

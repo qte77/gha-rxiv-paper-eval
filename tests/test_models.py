@@ -2,7 +2,14 @@
 from __future__ import annotations
 
 import pytest
-from eval_papers import ExtractedFields, Paper, Settings, Verdict
+from eval_papers import (
+    ArxivCsvRow,
+    ExtractedFields,
+    Paper,
+    Settings,
+    Verdict,
+    _paper_from_arxiv_row,
+)
 from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
@@ -45,6 +52,52 @@ def test_paper_missing_field_raises() -> None:
     del bad["DOI"]
     with pytest.raises(ValidationError):
         Paper.model_validate(bad)
+
+
+# ---------------------------------------------------------------------------
+# Paper — arxiv schema adapter
+# ---------------------------------------------------------------------------
+
+_ARXIV_ROW: dict[str, str] = {
+    "Published": "2024-06-13T17:59:59Z",
+    "Weekday(Monday==0)": "24",
+    "Updated": "2024-06-13T17:59:59Z",
+    "ID": "2406.09418",
+    "Version": "1",
+    "Title": "'VideoGPT+: Integrating Image and Video Encoders'",
+}
+
+
+def test_paper_from_arxiv_row_maps_core_fields() -> None:
+    paper = _paper_from_arxiv_row(_ARXIV_ROW)
+    assert paper.doi == "2406.09418"
+    assert paper.date == "2024-06-13"
+    assert paper.version == "1"
+
+
+def test_paper_from_arxiv_row_strips_quoted_title() -> None:
+    paper = _paper_from_arxiv_row(_ARXIV_ROW)
+    assert paper.title == "VideoGPT+: Integrating Image and Video Encoders"
+
+
+def test_paper_from_arxiv_row_derives_iso_week_from_published() -> None:
+    paper = _paper_from_arxiv_row(_ARXIV_ROW)
+    # 2024-06-13 is in ISO week 24
+    assert paper.iso_week == "24"
+
+
+def test_paper_from_arxiv_row_defaults_missing_columns() -> None:
+    # arxiv producer CSV has no Category / Authors columns
+    paper = _paper_from_arxiv_row(_ARXIV_ROW)
+    assert paper.category == ""
+    assert paper.authors == ""
+
+
+def test_arxiv_csv_row_missing_field_raises() -> None:
+    bad = dict(_ARXIV_ROW)
+    del bad["ID"]
+    with pytest.raises(ValidationError):
+        ArxivCsvRow.model_validate(bad)
 
 
 # ---------------------------------------------------------------------------
