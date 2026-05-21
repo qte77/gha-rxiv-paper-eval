@@ -762,5 +762,25 @@ class CategoriesWarningWithArxivTests(unittest.TestCase):
             self.assertNotIn("--categories", stderr_capture.getvalue())
 
 
+# ---------------------------------------------------------------------------
+# DefaultTopicTests
+# ---------------------------------------------------------------------------
+
+
+class DefaultTopicTests(unittest.TestCase):
+    def test_default_topic_constant_is_non_empty(self) -> None:
+        self.assertTrue(hasattr(eval_papers, "DEFAULT_TOPIC"))
+        self.assertTrue(eval_papers.DEFAULT_TOPIC.strip())
+
+    def test_parse_args_supplies_default_topic_when_omitted(self) -> None:
+        saved_argv = sys.argv[:]
+        try:
+            sys.argv = ["eval_papers.py", "--feed-repo", "any/repo"]
+            args = eval_papers.parse_args()
+        finally:
+            sys.argv = saved_argv
+        self.assertEqual(args.topic, eval_papers.DEFAULT_TOPIC)
+
+
 if __name__ == "__main__":
     unittest.main()
