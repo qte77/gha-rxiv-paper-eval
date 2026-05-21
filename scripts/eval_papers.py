@@ -57,6 +57,15 @@ DEFAULT_EXTRACTION_PROMPT = (
     "If a field is unknown, use an empty string or empty list."
 )
 
+# Default topic targeting the qte77 GitHub account's themes (see qte77/qte77
+# README: META/KERNEL/MECHANISM authority chain, agentic dev across 30+ repos,
+# AI agents-eval blog series). Callers can override via --topic.
+DEFAULT_TOPIC = (
+    "agentic LLM frameworks, multi-repo orchestration via GitHub Actions, "
+    "evaluation methodology for AI coding agents (including Claude Code), "
+    "and tool-augmented LLM workflows"
+)
+
 RXIV_DETAILS_URL = "https://api.biorxiv.org/details/{server}/{doi}"
 ARXIV_QUERY_URL = "https://export.arxiv.org/api/query?id_list={arxiv_id}"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
@@ -150,7 +159,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--server", choices=["biorxiv", "medrxiv", "arxiv"], default="biorxiv")
     p.add_argument("--year", default="")
     p.add_argument("--week", default="")
-    p.add_argument("--topic", required=True)
+    p.add_argument("--topic", default=DEFAULT_TOPIC)
     p.add_argument("--model", default="openai/gpt-4o-mini")
     p.add_argument("--categories", default="")
     p.add_argument("--max-papers", type=int, default=0)
