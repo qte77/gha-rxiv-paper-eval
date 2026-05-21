@@ -29,14 +29,17 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Literal
 
 # FIXME: drop defusedxml + Atom parsing once the producer (gha-rxiv-feed-action)
 # emits a normalized arxiv CSV that already carries the abstract. See
 # docs/design.md "Servers and schema adapters".
-import defusedxml.ElementTree as ET
+import defusedxml.ElementTree as ET  # noqa: N817  ET mirrors stdlib xml.etree convention
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 DEFAULT_RELEVANCE_PROMPT = (
     "You are a strict relevance classifier. "
@@ -102,7 +105,8 @@ class ArxivCsvRow(BaseModel):
     version: str = Field(alias="Version")
     title: str = Field(alias="Title")
 
-    def to_paper(self) -> "Paper":
+    def to_paper(self) -> Paper:
+        """Adapt this arxiv row to the normalized `Paper` shape."""
         date_str = self.published[:10]
         iso_week = dt.date.fromisoformat(date_str).isocalendar().week
         return Paper(
@@ -125,8 +129,11 @@ class Verdict(BaseModel):
 
 
 class ExtractedFields(BaseModel):
-    """Structured extraction output. extra='allow' preserves model-returned
-    unknown keys (e.g. a fallback _raw blob when parsing fails)."""
+    """Structured extraction output.
+
+    `extra='allow'` preserves model-returned unknown keys (e.g. a fallback
+    `_raw` blob when parsing fails).
+    """
 
     model_config = ConfigDict(extra="allow")
     summary: str = ""
@@ -137,6 +144,7 @@ class ExtractedFields(BaseModel):
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for the eval driver."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--feed-repo", required=True)
     p.add_argument("--server", choices=["biorxiv", "medrxiv", "arxiv"], default="biorxiv")
@@ -152,6 +160,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_year_week(year: str, week: str) -> tuple[str, str]:
+    """Return the (year, week) pair to fetch; empty inputs default to today (UTC)."""
     if year and week:
         return year, week.zfill(2)
     today = dt.datetime.now(dt.timezone.utc).date()
@@ -160,10 +169,11 @@ def resolve_year_week(year: str, week: str) -> tuple[str, str]:
 
 
 def fetch_feed(feed_repo: str, server: str, year: str, week: str, dest: Path) -> None:
+    """Download the week's producer CSV via `gh api` and write it to `dest`."""
     path = f"data/{server}/{year}/{week}.csv"
     # S603/S607: list-form invocation (no shell); `gh` is provided by the
     # GitHub Actions runner's PATH. Inputs are workflow-controlled.
-    gh_cmd = [  # noqa: S607
+    gh_cmd = [
         "gh",
         "api",
         f"repos/{feed_repo}/contents/{path}",
@@ -186,6 +196,7 @@ def _paper_from_arxiv_row(row: dict) -> Paper:
 
 
 def load_papers(csv_path: Path, server: str = "biorxiv") -> list[Paper]:
+    """Read the producer CSV and return rows as normalized `Paper` instances."""
     with csv_path.open(newline="") as f:
         rows = list(csv.DictReader(f))
     if server == "arxiv":
@@ -194,6 +205,7 @@ def load_papers(csv_path: Path, server: str = "biorxiv") -> list[Paper]:
 
 
 def write_papers(papers: list[Paper], dest: Path) -> None:
+    """Serialize papers back to a CSV with the canonical column order."""
     fieldnames = ["Date", "ISOWeek", "DOI", "Version", "Category", "Title", "Authors"]
     with dest.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -246,8 +258,11 @@ def _cache_save(output_dir: Path, verdict: Verdict) -> None:
 
 
 def _attempt(call: Callable[[], str]) -> tuple[str | None, int | None, str | None]:
-    """Run ``call`` once. Return (result, None, None) on success, or
-    (None, code, msg) on retryable failure. Non-retryable HTTPErrors raise."""
+    """Run ``call`` once.
+
+    Return ``(result, None, None)`` on success, or ``(None, code, msg)`` on
+    retryable failure. Non-retryable HTTPErrors raise.
+    """
     try:
         return call(), None, None
     except urllib.error.HTTPError as exc:
@@ -328,6 +343,7 @@ def is_relevant(
     system_prompt: str,
     output_dir: Path | None = None,
 ) -> bool:
+    """Return True iff the LLM classifies the paper as relevant to the topic."""
     use_cache = output_dir is not None and not Settings().no_cache
     if use_cache:
         cached = _cache_load(output_dir, paper.doi)  # type: ignore[arg-type]
@@ -352,8 +368,10 @@ def is_relevant(
 
 
 def _urlopen_bytes(url: str, timeout: int = 15) -> bytes:
-    """Read the body of an HTTPS GET. Single chokepoint for outbound HTTP so
-    Bandit B310 is suppressed exactly once and callers cannot pass non-https.
+    """Read the body of an HTTPS GET.
+
+    Single chokepoint for outbound HTTP so Bandit B310 is suppressed exactly
+    once and callers cannot pass non-https URLs.
     """
     if not url.startswith("https://"):
         raise ValueError(f"refusing non-https URL: {url!r}")
@@ -395,6 +413,7 @@ def _fetch_rxiv_abstract(server: str, doi: str) -> str:
 
 
 def fetch_abstract(server: str, doi: str) -> str:
+    """Dispatch on server and fetch the paper's abstract; empty string on failure."""
     if Settings().offline:
         return ""
     if server == "arxiv":
@@ -403,6 +422,7 @@ def fetch_abstract(server: str, doi: str) -> str:
 
 
 def extract_fields(abstract: str, *, model: str, system_prompt: str) -> ExtractedFields:
+    """Run the structured-extraction prompt and return parsed fields."""
     if not abstract:
         return ExtractedFields()
     raw = gh_models_rest(model, system_prompt, abstract, max_tokens=512)
@@ -423,6 +443,7 @@ def write_summary(
     after_prefilter: int,
     relevant: list[Paper],
 ) -> None:
+    """Render the run's `summary.md` artifact."""
     lines = [
         f"# rxiv eval — {server} {year}-W{week}",
         "",
@@ -503,6 +524,7 @@ def _run_extraction_pass(
 
 
 def main() -> int:
+    """Drive the full pipeline: fetch, prefilter, classify, enrich, write artifacts."""
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
