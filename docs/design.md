@@ -55,12 +55,10 @@ Outputs:
 
 Secrets:
 
-- `models-token` (required) — a token with `models: read` scope. Provider:
-  GitHub Models. The default `GITHUB_TOKEN` is **not** sufficient for some
-  org policies / fork PR contexts, so the workflow forces consumers to pass
-  one explicitly. Store as `MODELS_TOKEN` in the consumer repo's secrets and
-  forward via `secrets: models-token: ${{ secrets.MODELS_TOKEN }}` on the
-  `uses:` block.
+- None. The auto-provided `GITHUB_TOKEN` is used for both the `gh api` feed
+  fetch and the GitHub Models REST POST. GitHub now scopes `models: read`
+  through the standard token, so consumers only need to declare
+  `permissions: models: read` on their calling workflow — no separate PAT.
 
 ## Determinism
 

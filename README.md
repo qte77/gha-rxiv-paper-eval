@@ -14,6 +14,10 @@ enriches each hit with the abstract + a structured extraction.
 In a consumer repo, add a workflow that calls this one. Minimum viable:
 
 ```yaml
+permissions:
+  contents: read
+  models: read    # lets the auto-provided GITHUB_TOKEN call GitHub Models
+
 jobs:
   eval:
     uses: <owner>/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
@@ -21,8 +25,6 @@ jobs:
       topic: "<your project's relevance criterion>"
       categories: "<comma-separated bioRxiv categories>"
       # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
-    secrets:
-      models-token: ${{ secrets.MODELS_TOKEN }}
 ```
 
 The job uploads `relevant.csv`, `extracts.jsonl`, and `summary.md` as a
@@ -30,12 +32,11 @@ build artifact for downstream jobs (issue creation, indexing, etc).
 A copy-pasteable example with a triage job that opens GitHub issues lives at
 [`examples/consumer-eval.yaml`](examples/consumer-eval.yaml).
 
-## Required secret
+## Auth
 
-`MODELS_TOKEN` — a token with `models: read`. The default `GITHUB_TOKEN` is
-not always enough (org policies, PR-from-fork contexts), so this workflow
-takes it as an explicit secret. Create a fine-grained PAT and store it as
-the repo or org secret `MODELS_TOKEN`.
+No secret needed. The `permissions: models: read` declaration on the caller
+workflow authorizes the auto-provided `GITHUB_TOKEN` to call GitHub Models;
+the same token also covers the public-repo `gh api` feed fetch.
 
 ## Local smoke test
 

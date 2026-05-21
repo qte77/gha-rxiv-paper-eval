@@ -18,6 +18,8 @@ on:
         type: string
         default: ""
 
+# `models: read` lets the auto-provided GITHUB_TOKEN call GitHub Models;
+# no separate PAT/secret is required.
 permissions:
   contents: read
   models: read
@@ -39,11 +41,6 @@ jobs:
       enrich: true
       # feed_repo defaults to ${caller-owner}/gha-rxiv-feed-action; override if it lives elsewhere.
       # feed_repo: <feed-owner>/gha-rxiv-feed-action
-    secrets:
-      # Org/user secret holding a token with `models: read`. Create via
-      # Settings -> Developer settings -> Personal access tokens (fine-grained)
-      # and store as a repo or org secret named MODELS_TOKEN.
-      models-token: ${{ secrets.MODELS_TOKEN }}
 
   triage:
     needs: eval
