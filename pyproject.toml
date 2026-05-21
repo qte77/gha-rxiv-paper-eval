@@ -29,7 +29,10 @@ target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "S", "W"]
+select = ["C90", "E", "F", "I", "S", "W"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]  # assert is pytest's idiom
