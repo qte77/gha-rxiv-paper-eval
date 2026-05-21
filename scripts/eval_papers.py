@@ -29,7 +29,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 # FIXME: drop defusedxml + Atom parsing once the producer (gha-rxiv-feed-action)
 # emits a normalized arxiv CSV that already carries the abstract. See
@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     retry_max_attempts: int = 5
     retry_base_secs: float = 4.0
     no_cache: bool = False
+    # arxiv asks for ~3s between requests; back-to-back fetches otherwise
+    # quickly trip HTTP 429. Set to 0 in tests / when running offline.
+    arxiv_request_delay_secs: float = 3.0
 
 
 class Paper(BaseModel):
@@ -270,7 +273,10 @@ def _cache_save(output_dir: Path, verdict: Verdict) -> None:
     path.write_text(verdict.model_dump_json())
 
 
-def _attempt(call: Callable[[], str]) -> tuple[str | None, int | None, str | None]:
+T = TypeVar("T")
+
+
+def _attempt(call: Callable[[], T]) -> tuple[T | None, int | None, str | None]:
     """Run ``call`` once.
 
     Return ``(result, None, None)`` on success, or ``(None, code, msg)`` on
@@ -282,15 +288,15 @@ def _attempt(call: Callable[[], str]) -> tuple[str | None, int | None, str | Non
         if exc.code not in RETRYABLE_HTTP_CODES:
             detail = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
             raise RuntimeError(
-                f"GitHub Models HTTP {exc.code}: {detail.strip()}"
+                f"HTTP {exc.code}: {detail.strip()}"
             ) from exc
         return None, exc.code, f"HTTP {exc.code}"
-    except urllib.error.URLError as exc:
-        return None, None, f"network error: {exc.reason}"
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return None, None, f"network error: {exc}"
 
 
-def _with_retry(call: Callable[[], str], settings: Settings) -> str:
-    """Run ``call``, retrying on retryable HTTP/URL errors. Reusable across backends."""
+def _with_retry(call: Callable[[], T], settings: Settings) -> T:
+    """Run ``call``, retrying on retryable HTTP/URL/timeout errors."""
     last_code: int | None = None
     last_err: str | None = None
     for attempt in range(settings.retry_max_attempts):
@@ -302,7 +308,7 @@ def _with_retry(call: Callable[[], str], settings: Settings) -> str:
 
     code_str = str(last_code) if last_code is not None else "network"
     raise RuntimeError(
-        f"GitHub Models {code_str}: gave up after "
+        f"HTTP {code_str}: gave up after "
         f"{settings.retry_max_attempts} attempts ({last_err})"
     )
 
@@ -395,12 +401,15 @@ def _urlopen_bytes(url: str, timeout: int = 30) -> bytes:
 
 
 def _fetch_arxiv_abstract(arxiv_id: str) -> str:
+    settings = Settings()
+    # arxiv asks for ~3s between requests; back-to-back fetches otherwise
+    # quickly trip HTTP 429. Configurable via RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS.
+    if settings.arxiv_request_delay_secs > 0:
+        time.sleep(settings.arxiv_request_delay_secs)
     url = ARXIV_QUERY_URL.format(arxiv_id=arxiv_id)
     try:
-        data = _urlopen_bytes(url)
-    except (urllib.error.URLError, TimeoutError) as exc:
-        # arxiv API frequently stalls mid-read; the raw ssl/socket layer
-        # raises TimeoutError, which is not a URLError subclass.
+        data = _with_retry(lambda: _urlopen_bytes(url), settings)
+    except RuntimeError as exc:
         print(f"WARN: abstract fetch failed for {arxiv_id}: {exc}", file=sys.stderr)
         return ""
     try:
@@ -415,10 +424,11 @@ def _fetch_arxiv_abstract(arxiv_id: str) -> str:
 
 
 def _fetch_rxiv_abstract(server: str, doi: str) -> str:
+    settings = Settings()
     url = RXIV_DETAILS_URL.format(server=server, doi=doi)
     try:
-        payload = json.loads(_urlopen_bytes(url))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        payload = json.loads(_with_retry(lambda: _urlopen_bytes(url), settings))
+    except (RuntimeError, json.JSONDecodeError) as exc:
         print(f"WARN: abstract fetch failed for {doi}: {exc}", file=sys.stderr)
         return ""
     collection = payload.get("collection") or []

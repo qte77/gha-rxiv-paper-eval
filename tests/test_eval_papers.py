@@ -657,6 +657,30 @@ class FetchAbstractArxivTests(unittest.TestCase):
             result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
         self.assertEqual(result, "")
 
+    def test_retries_on_http_429_then_succeeds(self) -> None:
+        # arxiv 429 should retry per Settings, not give up immediately.
+        success = io.BytesIO(self._ATOM_PAYLOAD)
+        side_effects = [_http_error(429), _http_error(429), success]
+        with (
+            patch.dict(os.environ, {"RXIV_EVAL_RETRY_BASE_SECS": "0.01",
+                                    "RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS": "0"}),
+            patch("urllib.request.urlopen", side_effect=side_effects),
+            patch("time.sleep"),
+        ):
+            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
+        self.assertEqual(result, "This is the abstract text.")
+
+    def test_sleeps_polite_delay_before_arxiv_fetch(self) -> None:
+        resp = io.BytesIO(self._ATOM_PAYLOAD)
+        sleep_calls: list[float] = []
+        with (
+            patch.dict(os.environ, {"RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS": "2.5"}),
+            patch("urllib.request.urlopen", return_value=resp),
+            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+        ):
+            eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
+        self.assertIn(2.5, sleep_calls)
+
 
 # ---------------------------------------------------------------------------
 # LoadPapersServerDispatchTests
