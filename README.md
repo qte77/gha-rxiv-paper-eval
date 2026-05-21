@@ -11,7 +11,15 @@ enriches each hit with the abstract + a structured extraction.
 
 ## Usage
 
-In a consumer repo, add a workflow that calls this one. Minimum viable:
+In a consumer repo, add a workflow that calls this one. A working in-repo
+example is
+[`.github/workflows/eval-papers-dispatch.yaml`](.github/workflows/eval-papers-dispatch.yaml)
+— the manual dispatch wrapper this repo uses for its own smoke tests. The
+job uploads `relevant.csv`, `extracts.jsonl`, and `summary.md` as a build
+artifact for downstream jobs.
+
+<details>
+<summary>Minimum-viable caller</summary>
 
 ```yaml
 permissions:
@@ -27,10 +35,36 @@ jobs:
       # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
 ```
 
-The job uploads `relevant.csv`, `extracts.jsonl`, and `summary.md` as a
-build artifact for downstream jobs (issue creation, indexing, etc).
-A copy-pasteable example with a triage job that opens GitHub issues lives at
-[`examples/consumer-eval.yaml`](examples/consumer-eval.yaml).
+</details>
+
+<details>
+<summary>Downstream triage job (open an issue per relevant paper)</summary>
+
+```yaml
+  triage:
+    needs: eval
+    if: ${{ fromJSON(needs.eval.outputs.relevant_count) > 0 }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.eval.outputs.artifact_name }}
+          path: eval-output
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            doi=$(jq -r '.doi' <<<"$line")
+            title=$(jq -r '.title' <<<"$line")
+            summary=$(jq -r '.extracted.summary // ""' <<<"$line")
+            body=$(jq -n --arg d "$doi" --arg s "$summary" \
+              '"DOI: https://doi.org/\($d)\n\n\($s)"')
+            gh issue create --title "rxiv: $title" --body "$body" --label "rxiv-feed"
+          done < eval-output/extracts.jsonl
+```
+
+</details>
 
 ## Auth
 
@@ -38,7 +72,8 @@ No secret needed. The `permissions: models: read` declaration on the caller
 workflow authorizes the auto-provided `GITHUB_TOKEN` to call GitHub Models;
 the same token also covers the public-repo `gh api` feed fetch.
 
-## Local smoke test
+<details>
+<summary>Local smoke test (no workflow needed)</summary>
 
 ```bash
 GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
@@ -53,9 +88,11 @@ GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
 
 No `gh` extension needed — the script POSTs directly to the GitHub Models REST endpoint.
 
+</details>
+
 ## Layout
 
 - [`.github/workflows/eval-papers.yaml`](.github/workflows/eval-papers.yaml) — reusable workflow (`workflow_call`).
+- [`.github/workflows/eval-papers-dispatch.yaml`](.github/workflows/eval-papers-dispatch.yaml) — manual-dispatch wrapper that doubles as a working example.
 - [`scripts/eval_papers.py`](scripts/eval_papers.py) — driver invoked by the workflow; runnable standalone.
-- [`examples/consumer-eval.yaml`](examples/consumer-eval.yaml) — example caller for consumer repos.
 - [`docs/design.md`](docs/design.md) — pipeline, inputs/outputs, open questions.
