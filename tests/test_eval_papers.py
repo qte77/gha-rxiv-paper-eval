@@ -80,11 +80,13 @@ class GhModelsRestTests(unittest.TestCase):
             hdrs=None,  # type: ignore[arg-type]
             fp=io.BytesIO(b'{"message": "rate limited"}'),
         )
-        with patch("urllib.request.urlopen", side_effect=http_err):
-            with self.assertRaises(RuntimeError) as ctx:
-                eval_papers.gh_models_rest(
-                    model="m", system_prompt="s", user_prompt="u", max_tokens=4
-                )
+        with (
+            patch("urllib.request.urlopen", side_effect=http_err),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
         self.assertIn("429", str(ctx.exception))
 
 
@@ -94,7 +96,7 @@ class IsRelevantTests(unittest.TestCase):
         self._env.start()
         self.addCleanup(self._env.stop)
 
-    def _paper(self, **overrides) -> "eval_papers.Paper":
+    def _paper(self, **overrides) -> eval_papers.Paper:
         defaults = dict(
             date="2026-05-04",
             iso_week="19",
@@ -168,14 +170,16 @@ class RetryBackoffTests(unittest.TestCase):
         side_effects = [_http_error(429), _http_error(429), _yes_response()]
         sleep_calls: list[float] = []
 
-        with patch("urllib.request.urlopen", side_effect=side_effects) as mock_open:
-            with patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)):
-                result = eval_papers.gh_models_rest(
-                    model="openai/gpt-4o-mini",
-                    system_prompt="sys",
-                    user_prompt="user",
-                    max_tokens=4,
-                )
+        with (
+            patch("urllib.request.urlopen", side_effect=side_effects) as mock_open,
+            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+        ):
+            result = eval_papers.gh_models_rest(
+                model="openai/gpt-4o-mini",
+                system_prompt="sys",
+                user_prompt="user",
+                max_tokens=4,
+            )
 
         self.assertEqual(result, "YES")
         self.assertEqual(mock_open.call_count, 3)
@@ -190,14 +194,16 @@ class RetryBackoffTests(unittest.TestCase):
         side_effects = [_http_error(500), _http_error(502), _yes_response()]
         sleep_calls: list[float] = []
 
-        with patch("urllib.request.urlopen", side_effect=side_effects) as mock_open:
-            with patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)):
-                result = eval_papers.gh_models_rest(
-                    model="openai/gpt-4o-mini",
-                    system_prompt="sys",
-                    user_prompt="user",
-                    max_tokens=4,
-                )
+        with (
+            patch("urllib.request.urlopen", side_effect=side_effects) as mock_open,
+            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+        ):
+            result = eval_papers.gh_models_rest(
+                model="openai/gpt-4o-mini",
+                system_prompt="sys",
+                user_prompt="user",
+                max_tokens=4,
+            )
 
         self.assertEqual(result, "YES")
         self.assertEqual(mock_open.call_count, 3)
@@ -208,15 +214,17 @@ class RetryBackoffTests(unittest.TestCase):
         with patch.dict(os.environ, {"RXIV_EVAL_RETRY_MAX_ATTEMPTS": str(max_attempts)}):
             side_effects = [_http_error(429)] * max_attempts
 
-            with patch("urllib.request.urlopen", side_effect=side_effects) as mock_open:
-                with patch("time.sleep"):
-                    with self.assertRaises(RuntimeError) as ctx:
-                        eval_papers.gh_models_rest(
-                            model="openai/gpt-4o-mini",
-                            system_prompt="sys",
-                            user_prompt="user",
-                            max_tokens=4,
-                        )
+            with (
+                patch("urllib.request.urlopen", side_effect=side_effects) as mock_open,
+                patch("time.sleep"),
+                self.assertRaises(RuntimeError) as ctx,
+            ):
+                eval_papers.gh_models_rest(
+                    model="openai/gpt-4o-mini",
+                    system_prompt="sys",
+                    user_prompt="user",
+                    max_tokens=4,
+                )
 
         self.assertIn("429", str(ctx.exception))
         self.assertEqual(mock_open.call_count, max_attempts)
@@ -229,14 +237,16 @@ class RetryBackoffTests(unittest.TestCase):
         ]
         sleep_calls: list[float] = []
 
-        with patch("urllib.request.urlopen", side_effect=side_effects) as mock_open:
-            with patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)):
-                result = eval_papers.gh_models_rest(
-                    model="openai/gpt-4o-mini",
-                    system_prompt="sys",
-                    user_prompt="user",
-                    max_tokens=4,
-                )
+        with (
+            patch("urllib.request.urlopen", side_effect=side_effects) as mock_open,
+            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+        ):
+            result = eval_papers.gh_models_rest(
+                model="openai/gpt-4o-mini",
+                system_prompt="sys",
+                user_prompt="user",
+                max_tokens=4,
+            )
 
         self.assertEqual(result, "YES")
         self.assertEqual(mock_open.call_count, 3)
@@ -272,59 +282,58 @@ class OfflineStubTests(unittest.TestCase):
         self.assertIn(result1, ("YES", "NO"))
 
     def test_offline_yes_mode_returns_yes(self) -> None:
-        with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "yes"}):
-            with patch(
-                "urllib.request.urlopen",
-                side_effect=AssertionError("urlopen called in offline mode"),
-            ):
-                result = eval_papers.gh_models_rest(
-                    model="m", system_prompt="s", user_prompt="anything", max_tokens=4
-                )
+        with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "yes"}), patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("urlopen called in offline mode"),
+        ):
+            result = eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="anything", max_tokens=4
+            )
         self.assertEqual(result, "YES")
 
     def test_offline_no_mode_returns_no(self) -> None:
-        with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "no"}):
-            with patch(
-                "urllib.request.urlopen",
-                side_effect=AssertionError("urlopen called in offline mode"),
-            ):
-                result = eval_papers.gh_models_rest(
-                    model="m", system_prompt="s", user_prompt="anything", max_tokens=4
-                )
+        with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "no"}), patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("urlopen called in offline mode"),
+        ):
+            result = eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="anything", max_tokens=4
+            )
         self.assertEqual(result, "NO")
 
     def test_offline_flaky_mode_exercises_retry(self) -> None:
         sleep_calls: list[float] = []
         successes = 0
 
-        with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "flaky"}):
-            with patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)):
-                for i in range(30):
-                    try:
-                        result = eval_papers.gh_models_rest(
-                            model="m",
-                            system_prompt="s",
-                            user_prompt=f"prompt-{i}",
-                            max_tokens=4,
-                        )
-                        self.assertIn(result, ("YES", "NO"))
-                        successes += 1
-                    except RuntimeError:
-                        pass  # exhausted retries on some prompts is acceptable
+        with (
+            patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "flaky"}),
+            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+        ):
+            for i in range(30):
+                try:
+                    result = eval_papers.gh_models_rest(
+                        model="m",
+                        system_prompt="s",
+                        user_prompt=f"prompt-{i}",
+                        max_tokens=4,
+                    )
+                    self.assertIn(result, ("YES", "NO"))
+                    successes += 1
+                except RuntimeError:
+                    pass  # exhausted retries on some prompts is acceptable
 
         # At least some calls should succeed, and retry (sleep) should have fired
         self.assertGreater(successes, 0)
         self.assertGreater(len(sleep_calls), 0)
 
     def test_offline_skips_urlopen_completely(self) -> None:
-        with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "hash"}):
-            with patch(
-                "urllib.request.urlopen",
-                side_effect=AssertionError("urlopen must not be called in offline mode"),
-            ):
-                result = eval_papers.gh_models_rest(
-                    model="m", system_prompt="s", user_prompt="test-prompt", max_tokens=4
-                )
+        with patch.dict(os.environ, {"RXIV_EVAL_STUB_MODE": "hash"}), patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("urlopen must not be called in offline mode"),
+        ):
+            result = eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="test-prompt", max_tokens=4
+            )
         self.assertIn(result, ("YES", "NO"))
 
 
@@ -474,30 +483,32 @@ class DoiCacheTests(unittest.TestCase):
             self.assertEqual(mock_open2.call_count, 0)
 
     def test_cache_disabled_by_env(self) -> None:
-        with patch.dict(os.environ, {"RXIV_EVAL_NO_CACHE": "1"}):
-            with tempfile.TemporaryDirectory() as tmpdir:
-                out = pathlib.Path(tmpdir)
-                paper = self._paper()
+        with (
+            patch.dict(os.environ, {"RXIV_EVAL_NO_CACHE": "1"}),
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
+            out = pathlib.Path(tmpdir)
+            paper = self._paper()
 
-                with patch("urllib.request.urlopen", return_value=_yes_response()):
-                    eval_papers.is_relevant(
-                        paper, "abstract", model="m", system_prompt="sys", output_dir=out
-                    )
-
-                # With cache disabled, no cache file should be written
-                cache_file = eval_papers._cache_path(out, paper.doi)
-                self.assertFalse(
-                    cache_file.exists(),
-                    "cache file should not exist when RXIV_EVAL_NO_CACHE=1",
+            with patch("urllib.request.urlopen", return_value=_yes_response()):
+                eval_papers.is_relevant(
+                    paper, "abstract", model="m", system_prompt="sys", output_dir=out
                 )
 
-                # Second call should hit urlopen again (different response)
-                with patch("urllib.request.urlopen", return_value=_no_response()) as mock_open2:
-                    result2 = eval_papers.is_relevant(
-                        paper, "abstract", model="m", system_prompt="sys", output_dir=out
-                    )
-                self.assertFalse(result2)  # got the new NO response
-                self.assertEqual(mock_open2.call_count, 1)
+            # With cache disabled, no cache file should be written
+            cache_file = eval_papers._cache_path(out, paper.doi)
+            self.assertFalse(
+                cache_file.exists(),
+                "cache file should not exist when RXIV_EVAL_NO_CACHE=1",
+            )
+
+            # Second call should hit urlopen again (different response)
+            with patch("urllib.request.urlopen", return_value=_no_response()) as mock_open2:
+                result2 = eval_papers.is_relevant(
+                    paper, "abstract", model="m", system_prompt="sys", output_dir=out
+                )
+            self.assertFalse(result2)  # got the new NO response
+            self.assertEqual(mock_open2.call_count, 1)
 
     def test_cache_per_doi(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -566,12 +577,14 @@ class OfflineEndToEndTests(unittest.TestCase):
                     "--max-papers", "5",
                     "--output-dir", str(out),
                 ]
-                with patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed):
-                    with patch(
+                with (
+                    patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed),
+                    patch(
                         "urllib.request.urlopen",
                         side_effect=AssertionError("urlopen must not fire in offline mode"),
-                    ):
-                        rc = eval_papers.main()
+                    ),
+                ):
+                    rc = eval_papers.main()
             finally:
                 sys.argv = saved_argv
 
@@ -623,12 +636,11 @@ class FetchAbstractArxivTests(unittest.TestCase):
         self.assertIn("2406.09418", url_str)
 
     def test_returns_empty_on_offline(self) -> None:
-        with patch.dict(os.environ, {"RXIV_EVAL_OFFLINE": "1"}):
-            with patch(
-                "urllib.request.urlopen",
-                side_effect=AssertionError("urlopen must not fire in offline mode"),
-            ):
-                result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
+        with patch.dict(os.environ, {"RXIV_EVAL_OFFLINE": "1"}), patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("urlopen must not fire in offline mode"),
+        ):
+            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
         self.assertEqual(result, "")
 
     def test_parse_error_returns_empty_string(self) -> None:
