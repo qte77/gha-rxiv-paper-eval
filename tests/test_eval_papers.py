@@ -119,12 +119,30 @@ class IsRelevantTests(unittest.TestCase):
             result = eval_papers.is_relevant(
                 paper, abstract, model="openai/gpt-4o-mini", system_prompt="sys"
             )
-        self.assertTrue(result)
+        self.assertTrue(result.relevant)
         body = json.loads(mock_urlopen.call_args.args[0].data)
         user_msg = next(m["content"] for m in body["messages"] if m["role"] == "user")
         self.assertIn(paper.title, user_msg)
         self.assertIn(paper.category, user_msg)
         self.assertIn(abstract, user_msg)
+
+    def test_is_relevant_returns_verdict_with_reason(self) -> None:
+        paper = self._paper()
+        resp = _fake_response({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": '{"verdict":"YES","reason":"on-topic methodology"}',
+                }
+            }]
+        })
+        with patch("urllib.request.urlopen", return_value=resp):
+            result = eval_papers.is_relevant(
+                paper, "abstract", model="m", system_prompt="sys"
+            )
+        self.assertTrue(result.relevant)
+        self.assertEqual(result.reason, "on-topic methodology")
+        self.assertEqual(result.doi, paper.doi)
 
 
 def _http_error(code: int) -> urllib.error.HTTPError:
@@ -507,7 +525,7 @@ class DoiCacheTests(unittest.TestCase):
                 result2 = eval_papers.is_relevant(
                     paper, "abstract", model="m", system_prompt="sys", output_dir=out
                 )
-            self.assertFalse(result2)  # got the new NO response
+            self.assertFalse(result2.relevant)  # got the new NO response
             self.assertEqual(mock_open2.call_count, 1)
 
     def test_cache_per_doi(self) -> None:
@@ -804,6 +822,52 @@ class DefaultTopicTests(unittest.TestCase):
         finally:
             sys.argv = saved_argv
         self.assertEqual(args.topic, eval_papers.DEFAULT_TOPIC)
+
+
+# ---------------------------------------------------------------------------
+# ParseRelevanceResponseTests
+# ---------------------------------------------------------------------------
+
+
+class ParseRelevanceResponseTests(unittest.TestCase):
+    """The relevance prompt now asks for a JSON `{verdict, reason}` object.
+
+    The parser must gracefully degrade if the model emits prose or
+    malformed JSON: the verdict still gets classified (startswith YES),
+    the reason just becomes empty.
+    """
+
+    def test_parses_yes_json_with_reason(self) -> None:
+        raw = '{"verdict":"YES","reason":"matches topic"}'
+        relevant, reason = eval_papers._parse_relevance_response(raw)
+        self.assertTrue(relevant)
+        self.assertEqual(reason, "matches topic")
+
+    def test_parses_no_json_with_reason(self) -> None:
+        raw = '{"verdict":"NO","reason":"off-topic"}'
+        relevant, reason = eval_papers._parse_relevance_response(raw)
+        self.assertFalse(relevant)
+        self.assertEqual(reason, "off-topic")
+
+    def test_malformed_json_falls_back_to_startswith(self) -> None:
+        # Prose model output without YES prefix → NO + empty reason
+        raw = "not json, but the model rambled about something"
+        relevant, reason = eval_papers._parse_relevance_response(raw)
+        self.assertFalse(relevant)
+        self.assertEqual(reason, "")
+
+    def test_plain_text_yes_fallback(self) -> None:
+        # Pre-format model output (a bare token) should still classify.
+        raw = "YES"
+        relevant, reason = eval_papers._parse_relevance_response(raw)
+        self.assertTrue(relevant)
+        self.assertEqual(reason, "")
+
+    def test_yes_json_with_extra_whitespace(self) -> None:
+        raw = '  {"verdict": "yes", "reason": "good"}  '
+        relevant, reason = eval_papers._parse_relevance_response(raw)
+        self.assertTrue(relevant)
+        self.assertEqual(reason, "good")
 
 
 if __name__ == "__main__":

@@ -43,9 +43,11 @@ if TYPE_CHECKING:
 
 DEFAULT_RELEVANCE_PROMPT = (
     "You are a strict relevance classifier. "
-    "Reply with a single token: YES or NO. "
+    'Reply with a single-line JSON object: {{"verdict":"YES" or "NO",'
+    '"reason":"<one short clause, max 15 words>"}}. '
     "A paper is relevant if and only if it could plausibly inform research on: {topic}. "
-    "Be conservative: when uncertain, answer NO."
+    "Be conservative: when uncertain, answer NO. "
+    "The reason must be specific to this paper, not boilerplate."
 )
 
 DEFAULT_EXTRACTION_PROMPT = (
@@ -137,11 +139,18 @@ class ArxivCsvRow(BaseModel):
 
 
 class Verdict(BaseModel):
-    """Per-paper relevance result; also the DOI-cache payload schema."""
+    """Per-paper relevance result; also the DOI-cache payload schema.
+
+    `reason` is the model's short justification when the relevance prompt
+    returns a JSON object. Defaults to "" so cache files written before
+    this field existed still validate, and so falls-back to plain-text
+    `YES`/`NO` responses don't crash.
+    """
 
     doi: str
     relevant: bool
     raw: str
+    reason: str = ""
 
 
 class ExtractedFields(BaseModel):
@@ -228,6 +237,26 @@ def write_papers(papers: list[Paper], dest: Path) -> None:
         w.writeheader()
         for paper in papers:
             w.writerow(paper.model_dump(by_alias=True))
+
+
+def _parse_relevance_response(raw: str) -> tuple[bool, str]:
+    """Parse the LLM's relevance reply into ``(relevant, reason)``.
+
+    Expects the JSON contract `{"verdict": "YES"|"NO", "reason": "..."}`.
+    Falls back gracefully to a startswith check on the raw text if the
+    model emits prose or malformed JSON — the verdict still classifies,
+    only the reason is dropped.
+    """
+    stripped = raw.strip()
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        verdict = str(payload.get("verdict", "")).strip().upper()
+        reason = str(payload.get("reason", "")).strip()
+        return verdict.startswith("YES"), reason
+    return stripped.upper().startswith("YES"), ""
 
 
 def _stub_response(user_prompt: str) -> str:
@@ -361,29 +390,28 @@ def is_relevant(
     model: str,
     system_prompt: str,
     output_dir: Path | None = None,
-) -> bool:
-    """Return True iff the LLM classifies the paper as relevant to the topic."""
+) -> Verdict:
+    """Classify the paper and return a `Verdict` carrying verdict + reason."""
     use_cache = output_dir is not None and not Settings().no_cache
     if use_cache:
         cached = _cache_load(output_dir, paper.doi)  # type: ignore[arg-type]
         if cached is not None:
-            return cached.relevant
+            return cached
 
     user_prompt = (
         f"Title: {paper.title}\n"
         f"Category: {paper.category}\n\n"
         f"Abstract: {abstract or '(unavailable)'}"
     )
-    raw = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
-    relevant = raw.strip().upper().startswith("YES")
+    # max_tokens=80 leaves room for the JSON envelope + a ~15-word reason.
+    raw = gh_models_rest(model, system_prompt, user_prompt, max_tokens=80)
+    relevant, reason = _parse_relevance_response(raw)
+    verdict = Verdict(doi=paper.doi, relevant=relevant, raw=raw, reason=reason)
 
     if use_cache:
-        _cache_save(
-            output_dir,  # type: ignore[arg-type]
-            Verdict(doi=paper.doi, relevant=relevant, raw=raw),
-        )
+        _cache_save(output_dir, verdict)  # type: ignore[arg-type]
 
-    return relevant
+    return verdict
 
 
 def _urlopen_bytes(url: str, timeout: int = 30) -> bytes:
@@ -457,6 +485,23 @@ def extract_fields(abstract: str, *, model: str, system_prompt: str) -> Extracte
         return ExtractedFields.model_validate({"_raw": raw})
 
 
+def _render_summary_section(
+    title: str,
+    items: list[tuple[Paper, str]],
+    head_fmt: Callable[[Paper], str],
+) -> list[str]:
+    """Render a summary section: header + bullet per paper + optional Why line."""
+    out: list[str] = [f"## {title}", ""]
+    if not items:
+        out.append("_(none)_")
+        return out
+    for paper, reason in items:
+        out.append(head_fmt(paper))
+        if reason:
+            out.append(f"  - Why: {reason}")
+    return out
+
+
 def write_summary(
     output_dir: Path,
     *,
@@ -466,9 +511,10 @@ def write_summary(
     topic: str,
     total: int,
     after_prefilter: int,
-    relevant: list[Paper],
+    relevant: list[tuple[Paper, str]],
+    rejected: list[tuple[Paper, str]],
 ) -> None:
-    """Render the run's `summary.md` artifact."""
+    """Render `summary.md` with verdict reasons for both YES and NO."""
     lines = [
         f"# rxiv eval — {server} {year}-W{week}",
         "",
@@ -476,12 +522,20 @@ def write_summary(
         f"- Source rows: {total}",
         f"- After category/cap pre-filter: {after_prefilter}",
         f"- Relevant (LLM YES): {len(relevant)}",
-        "",
-        "## Relevant papers",
+        f"- Excluded (LLM NO): {len(rejected)}",
         "",
     ]
-    for p in relevant:
-        lines.append(f"- [{p.title}](https://doi.org/{p.doi}) — *{p.category}*")
+    lines.extend(_render_summary_section(
+        "Relevant papers",
+        relevant,
+        lambda p: f"- [{p.title}](https://doi.org/{p.doi}) — *{p.category}*",
+    ))
+    lines.append("")
+    lines.extend(_render_summary_section(
+        "Excluded papers (LLM said NO)",
+        rejected,
+        lambda p: f"- {p.title} ({p.doi})",
+    ))
     (output_dir / "summary.md").write_text("\n".join(lines) + "\n")
 
 
@@ -503,13 +557,15 @@ def _run_relevance_pass(
     model: str,
     relevance_prompt: str,
     output_dir: Path,
-) -> list[tuple[Paper, str]]:
-    relevant: list[tuple[Paper, str]] = []
+) -> tuple[list[tuple[Paper, str, str]], list[tuple[Paper, str]]]:
+    """Classify each paper and return (yes_with_abstract_and_reason, no_with_reason)."""
+    yes_list: list[tuple[Paper, str, str]] = []
+    no_list: list[tuple[Paper, str]] = []
     total = len(papers)
     for i, paper in enumerate(papers, 1):
         abstract = fetch_abstract(server, paper.doi)
         try:
-            keep = is_relevant(
+            verdict = is_relevant(
                 paper,
                 abstract,
                 model=model,
@@ -519,11 +575,13 @@ def _run_relevance_pass(
         except RuntimeError as exc:
             print(f"WARN: relevance call failed for {paper.doi}: {exc}", file=sys.stderr)
             continue
-        marker = "YES" if keep else "no "
+        marker = "YES" if verdict.relevant else "no "
         print(f"[{i}/{total}] {marker} {paper.doi} {paper.title[:80]}", file=sys.stderr)
-        if keep:
-            relevant.append((paper, abstract))
-    return relevant
+        if verdict.relevant:
+            yes_list.append((paper, abstract, verdict.reason))
+        else:
+            no_list.append((paper, verdict.reason))
+    return yes_list, no_list
 
 
 def _run_extraction_pass(
@@ -580,7 +638,7 @@ def main() -> int:
     relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(
         topic=args.topic
     )
-    relevant = _run_relevance_pass(
+    yes_list, no_list = _run_relevance_pass(
         papers,
         server=args.server,
         model=args.model,
@@ -588,10 +646,14 @@ def main() -> int:
         output_dir=output_dir,
     )
 
-    write_papers([p for p, _ in relevant], output_dir / "relevant.csv")
+    write_papers([p for p, _, _ in yes_list], output_dir / "relevant.csv")
 
-    if args.enrich and relevant:
-        _run_extraction_pass(relevant, model=args.model, output_dir=output_dir)
+    if args.enrich and yes_list:
+        _run_extraction_pass(
+            [(paper, abstract) for paper, abstract, _ in yes_list],
+            model=args.model,
+            output_dir=output_dir,
+        )
 
     write_summary(
         output_dir,
@@ -601,10 +663,11 @@ def main() -> int:
         topic=args.topic,
         total=total,
         after_prefilter=after_prefilter,
-        relevant=[p for p, _ in relevant],
+        relevant=[(paper, reason) for paper, _abstract, reason in yes_list],
+        rejected=no_list,
     )
 
-    print(f"Done. Relevant: {len(relevant)}/{after_prefilter}", file=sys.stderr)
+    print(f"Done. Relevant: {len(yes_list)}/{after_prefilter}", file=sys.stderr)
     return 0
 
 
