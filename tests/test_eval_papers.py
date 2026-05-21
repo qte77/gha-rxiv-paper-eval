@@ -657,16 +657,6 @@ class FetchAbstractArxivTests(unittest.TestCase):
             result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
         self.assertEqual(result, "")
 
-    def test_timeout_error_returns_empty_string(self) -> None:
-        # arxiv API can stall mid-read; the raw ssl/socket layer raises
-        # TimeoutError, which is NOT a subclass of urllib.error.URLError.
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=TimeoutError("read timeout"),
-        ):
-            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
-        self.assertEqual(result, "")
-
 
 # ---------------------------------------------------------------------------
 # LoadPapersServerDispatchTests

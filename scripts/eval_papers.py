@@ -376,7 +376,7 @@ def is_relevant(
     return relevant
 
 
-def _urlopen_bytes(url: str, timeout: int = 30) -> bytes:
+def _urlopen_bytes(url: str, timeout: int = 15) -> bytes:
     """Read the body of an HTTPS GET.
 
     Single chokepoint for outbound HTTP so Bandit B310 is suppressed exactly
@@ -394,9 +394,7 @@ def _fetch_arxiv_abstract(arxiv_id: str) -> str:
     url = ARXIV_QUERY_URL.format(arxiv_id=arxiv_id)
     try:
         data = _urlopen_bytes(url)
-    except (urllib.error.URLError, TimeoutError) as exc:
-        # arxiv API frequently stalls mid-read; the raw ssl/socket layer
-        # raises TimeoutError, which is not a URLError subclass.
+    except urllib.error.URLError as exc:
         print(f"WARN: abstract fetch failed for {arxiv_id}: {exc}", file=sys.stderr)
         return ""
     try:
@@ -414,7 +412,7 @@ def _fetch_rxiv_abstract(server: str, doi: str) -> str:
     url = RXIV_DETAILS_URL.format(server=server, doi=doi)
     try:
         payload = json.loads(_urlopen_bytes(url))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except (urllib.error.URLError, json.JSONDecodeError) as exc:
         print(f"WARN: abstract fetch failed for {doi}: {exc}", file=sys.stderr)
         return ""
     collection = payload.get("collection") or []
