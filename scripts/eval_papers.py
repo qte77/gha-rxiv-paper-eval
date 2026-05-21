@@ -161,17 +161,17 @@ def resolve_year_week(year: str, week: str) -> tuple[str, str]:
 
 def fetch_feed(feed_repo: str, server: str, year: str, week: str, dest: Path) -> None:
     path = f"data/{server}/{year}/{week}.csv"
-    proc = subprocess.run(
-        [
-            "gh",
-            "api",
-            f"repos/{feed_repo}/contents/{path}",
-            "-H",
-            "Accept: application/vnd.github.raw",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
+    # S603/S607: list-form invocation (no shell); `gh` is provided by the
+    # GitHub Actions runner's PATH. Inputs are workflow-controlled.
+    gh_cmd = [  # noqa: S607
+        "gh",
+        "api",
+        f"repos/{feed_repo}/contents/{path}",
+        "-H",
+        "Accept: application/vnd.github.raw",
+    ]
+    proc = subprocess.run(  # noqa: S603
+        gh_cmd, check=False, capture_output=True, text=True
     )
     if proc.returncode != 0:
         raise SystemExit(
@@ -209,7 +209,7 @@ def _stub_response(user_prompt: str) -> str:
         return "YES"
     if mode == "no":
         return "NO"
-    if mode == "flaky" and random.random() < 0.33:
+    if mode == "flaky" and random.random() < 0.33:  # noqa: S311  fault-injection stub, not crypto
         raise urllib.error.HTTPError(
             url=GITHUB_MODELS_URL,
             code=429,
@@ -289,7 +289,8 @@ def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_to
             {"role": "user", "content": user_prompt},
         ],
     }
-    req = urllib.request.Request(
+    # S310: GITHUB_MODELS_URL is a constant https:// endpoint.
+    req = urllib.request.Request(  # noqa: S310
         GITHUB_MODELS_URL,
         data=json.dumps(payload).encode("utf-8"),
         headers={
@@ -299,7 +300,7 @@ def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_to
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
         body = json.load(resp)
     return body["choices"][0]["message"]["content"]
 
@@ -356,7 +357,9 @@ def _urlopen_bytes(url: str, timeout: int = 15) -> bytes:
     """
     if not url.startswith("https://"):
         raise ValueError(f"refusing non-https URL: {url!r}")
-    with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310
+    # Bandit B310 / ruff S310: scheme is enforced above; both linters get the
+    # same justification but read different suppression syntaxes.
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310  # noqa: S310
         return resp.read()
 
 
