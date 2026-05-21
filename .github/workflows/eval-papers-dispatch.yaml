@@ -9,9 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       topic:
-        description: "Free-text topic the relevance filter judges against."
+        description: >-
+          Free-text topic the relevance filter judges against. Empty = use
+          the script's built-in DEFAULT_TOPIC (qte77 account themes).
         type: string
-        required: true
+        required: false
+        default: ""
       server:
         description: "Preprint server."
         type: choice

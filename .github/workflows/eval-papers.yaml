@@ -4,9 +4,12 @@ on:
   workflow_call:
     inputs:
       topic:
-        description: "Free-text topic the relevance filter will judge against."
+        description: >-
+          Free-text topic the relevance filter judges against. Empty = use
+          the script's built-in DEFAULT_TOPIC (qte77 account themes).
         type: string
-        required: true
+        required: false
+        default: ""
       server:
         description: "Preprint server: biorxiv, medrxiv, or arxiv."
         type: string
@@ -111,11 +114,11 @@ jobs:
           args=(
             --feed-repo "$INPUT_FEED_REPO"
             --server "$INPUT_SERVER"
-            --topic "$INPUT_TOPIC"
             --model "$INPUT_MODEL"
             --max-papers "$INPUT_MAX_PAPERS"
             --output-dir output
           )
+          [[ -n "$INPUT_TOPIC" ]] && args+=(--topic "$INPUT_TOPIC")
           [[ -n "$INPUT_YEAR" ]] && args+=(--year "$INPUT_YEAR")
           [[ -n "$INPUT_WEEK" ]] && args+=(--week "$INPUT_WEEK")
           [[ -n "$INPUT_CATEGORIES" ]] && args+=(--categories "$INPUT_CATEGORIES")
