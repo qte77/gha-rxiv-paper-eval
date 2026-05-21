@@ -56,14 +56,6 @@ on:
         description: "Python version to set up for the eval script."
         type: string
         default: "3.12"
-    secrets:
-      models-token:
-        description: >-
-          Token with `models: read` permission for GitHub Models. Required.
-          A fine-grained PAT or org-scoped token works; the default GITHUB_TOKEN
-          on `pull_request` from forks (and some org policies) cannot call
-          GitHub Models, hence the explicit secret.
-        required: true
     outputs:
       relevant_count:
         description: "Number of papers that passed the relevance filter."
@@ -122,8 +114,10 @@ jobs:
         id: run
         env:
           # Used for both `gh api` (feed fetch) and the GitHub Models REST
-          # POST inside the script. Must carry `models: read`.
-          GH_TOKEN: ${{ secrets.models-token }}
+          # POST. The auto-provided GITHUB_TOKEN can call GitHub Models when
+          # the workflow declares `permissions: models: read` (above), so no
+          # separate PAT is needed.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_TOPIC: ${{ inputs.topic }}
           INPUT_SERVER: ${{ inputs.server }}
           INPUT_YEAR: ${{ inputs.year }}

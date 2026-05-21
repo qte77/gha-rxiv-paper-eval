@@ -67,5 +67,3 @@ jobs:
       model: ${{ inputs.model }}
       enrich: ${{ fromJSON(inputs.enrich) }}
       feed_repo: ${{ inputs.feed_repo }}
-    secrets:
-      models-token: ${{ secrets.MODELS_TOKEN }}
