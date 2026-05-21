@@ -1,9 +1,9 @@
 name: Evaluate rxiv papers (manual)
 
 # Thin wrapper that exposes the reusable `eval-papers.yaml` workflow to the
-# Actions UI for IRL testing. The reusable job still checks out
-# Lambda-Biolab/gha-rxiv-paper-eval@<eval_repo_ref> internally, so push the
-# branch under test there and pass its ref via `eval_repo_ref`.
+# Actions UI. The reusable workflow auto-derives the eval repo + ref from
+# `github.workflow_ref` / `github.workflow_sha`, so this dispatcher just
+# forwards inputs.
 
 on:
   workflow_dispatch:
@@ -44,10 +44,11 @@ on:
         description: "Fetch abstracts and run the extraction prompt."
         type: boolean
         default: true
-      eval_repo_ref:
-        description: "Ref of Lambda-Biolab/gha-rxiv-paper-eval to check out."
+      feed_repo:
+        description: >-
+          Producer repo. Empty = ${caller-owner}/gha-rxiv-feed-action.
         type: string
-        default: main
+        default: ""
 
 permissions:
   contents: read
@@ -65,6 +66,6 @@ jobs:
       max_papers: ${{ fromJSON(inputs.max_papers) }}
       model: ${{ inputs.model }}
       enrich: ${{ fromJSON(inputs.enrich) }}
-      eval_repo_ref: ${{ inputs.eval_repo_ref }}
+      feed_repo: ${{ inputs.feed_repo }}
     secrets:
       models-token: ${{ secrets.MODELS_TOKEN }}

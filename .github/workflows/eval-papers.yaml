@@ -47,13 +47,15 @@ on:
         type: string
         default: ""
       feed_repo:
-        description: "Producer repo that hosts data/<server>/<year>/<week>.csv."
+        description: >-
+          Producer repo that hosts data/<server>/<year>/<week>.csv.
+          Empty = ${caller-owner}/gha-rxiv-feed-action.
         type: string
-        default: Lambda-Biolab/gha-rxiv-feed-action
-      eval_repo_ref:
-        description: "Ref of gha-rxiv-paper-eval to check out (tag/branch/SHA)."
+        default: ""
+      python_version:
+        description: "Python version to set up for the eval script."
         type: string
-        default: main
+        default: "3.12"
     secrets:
       models-token:
         description: >-
@@ -81,16 +83,32 @@ jobs:
       relevant_count: ${{ steps.run.outputs.relevant_count }}
       artifact_name: ${{ steps.run.outputs.artifact_name }}
     steps:
+      - name: Resolve eval-repo source from workflow_ref
+        id: eval_src
+        # github.workflow_ref looks like:
+        #   <owner>/<repo>/.github/workflows/<file>@<ref>
+        # We strip /.github/* to get owner/repo and use workflow_sha (the
+        # commit the reusable workflow file was loaded from) so the script
+        # version always matches the workflow version the caller pinned.
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          repo="${WORKFLOW_REF%/.github/*}"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "sha=${WORKFLOW_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout eval repo
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
-          repository: Lambda-Biolab/gha-rxiv-paper-eval
-          ref: ${{ inputs.eval_repo_ref }}
+          repository: ${{ steps.eval_src.outputs.repo }}
+          ref: ${{ steps.eval_src.outputs.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.12"
+          python-version: ${{ inputs.python_version }}
 
       - name: Run evaluation
         id: run
@@ -111,8 +129,9 @@ jobs:
           EXTRACTION_PROMPT: ${{ inputs.extraction_prompt }}
         run: |
           set -euo pipefail
+          feed_repo="${INPUT_FEED_REPO:-${GITHUB_REPOSITORY_OWNER}/gha-rxiv-feed-action}"
           args=(
-            --feed-repo "$INPUT_FEED_REPO"
+            --feed-repo "$feed_repo"
             --server "$INPUT_SERVER"
             --model "$INPUT_MODEL"
             --max-papers "$INPUT_MAX_PAPERS"
