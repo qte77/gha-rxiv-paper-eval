@@ -9,7 +9,61 @@ enriches each hit with the abstract + a structured extraction.
 > **Status:** prototype. See `docs/design.md` for the contract and open
 > questions.
 
-## Usage
+## Run it locally
+
+The script is runnable standalone via `uv`. The `Makefile` wraps the common
+recipes; `make help` lists them all.
+
+```bash
+# One-time
+make sync                       # uv sync (project + dev)
+
+# Quality gates (matches CI)
+make validate                   # lint + complexity + test
+make test                       # or individually
+make lint
+make complexity
+
+# End-to-end smoke against real arxiv (uses your `gh auth token`)
+make smoke SERVER=arxiv YEAR=2024 WEEK=24 MAX=5
+
+# Other servers / weeks / output dirs
+make smoke SERVER=biorxiv YEAR=2026 WEEK=18 MAX=10 OUT=/tmp/biorxiv-test
+```
+
+Outputs land in `$OUT/` (default `/tmp/rxiv-eval/`): `relevant.csv`,
+`extracts.jsonl`, `summary.md`, and `feed.csv` (raw producer CSV).
+
+<details>
+<summary>Offline smoke (stubbed LLM, no Models call)</summary>
+
+```bash
+RXIV_EVAL_OFFLINE=1 RXIV_EVAL_STUB_MODE=yes \
+  make smoke SERVER=arxiv YEAR=2024 WEEK=24
+```
+
+`RXIV_EVAL_STUB_MODE` accepts `yes`/`no`/`hash`/`flaky` to control the stub's
+verdict; abstract fetches return empty in offline mode.
+
+</details>
+
+<details>
+<summary>Raw invocation (no Makefile)</summary>
+
+```bash
+GH_TOKEN=$(gh auth token) uv run python scripts/eval_papers.py \
+  --feed-repo <owner>/gha-rxiv-feed-action \
+  --server biorxiv \
+  --topic "<your topic>" \
+  --categories "<your categories>" \
+  --max-papers 5 \
+  --enrich \
+  --output-dir /tmp/rxiv-eval
+```
+
+</details>
+
+## Use it as a GitHub Actions workflow
 
 In a consumer repo, add a workflow that calls this one. A working in-repo
 example is
@@ -72,23 +126,9 @@ No secret needed. The `permissions: models: read` declaration on the caller
 workflow authorizes the auto-provided `GITHUB_TOKEN` to call GitHub Models;
 the same token also covers the public-repo `gh api` feed fetch.
 
-<details>
-<summary>Local smoke test (no workflow needed)</summary>
-
-```bash
-GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
-  --feed-repo <owner>/gha-rxiv-feed-action \
-  --server biorxiv \
-  --topic "<your topic>" \
-  --categories "<your categories>" \
-  --max-papers 5 \
-  --enrich \
-  --output-dir /tmp/rxiv-eval
-```
-
-No `gh` extension needed — the script POSTs directly to the GitHub Models REST endpoint.
-
-</details>
+For local runs the script reads `GH_TOKEN` from the environment — `gh auth
+token` provides one with both `gh api` and (depending on your account's
+scopes) Models access.
 
 ## Docs
 
@@ -100,6 +140,7 @@ No `gh` extension needed — the script POSTs directly to the GitHub Models REST
 
 ## Layout
 
+- [`Makefile`](Makefile) — single entry point for local + CI tasks (`make help`).
 - [`.github/workflows/eval-papers.yaml`](.github/workflows/eval-papers.yaml) — reusable workflow (`workflow_call`).
 - [`.github/workflows/eval-papers-dispatch.yaml`](.github/workflows/eval-papers-dispatch.yaml) — manual-dispatch wrapper that doubles as a working example.
 - [`scripts/eval_papers.py`](scripts/eval_papers.py) — driver invoked by the workflow; runnable standalone.
