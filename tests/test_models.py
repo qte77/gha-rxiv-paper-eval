@@ -100,6 +100,36 @@ def test_arxiv_csv_row_missing_field_raises() -> None:
         ArxivCsvRow.model_validate(bad)
 
 
+_ARXIV_ROW_2026: dict[str, str] = {
+    # 2026 schema: dropped Weekday(Monday==0), added Categories.
+    "Published": "2026-05-19T17:59:54Z",
+    "ISOWeek": "21",
+    "Updated": "2026-05-19T17:59:54Z",
+    "ID": "2605.20185",
+    "Version": "1",
+    "Title": "'PiG-Avatar: Hierarchical Neural-Field-Guided Gaussian Avatars'",
+    "Categories": "cs.GR;cs.CV",
+}
+
+
+def test_paper_from_arxiv_2026_schema() -> None:
+    paper = _paper_from_arxiv_row(_ARXIV_ROW_2026)
+    assert paper.doi == "2605.20185"
+    assert paper.iso_week == "21"
+
+
+def test_paper_from_arxiv_2026_uses_first_category() -> None:
+    paper = _paper_from_arxiv_row(_ARXIV_ROW_2026)
+    # Categories is "cs.GR;cs.CV" — primary should be cs.GR
+    assert paper.category == "cs.GR"
+
+
+def test_paper_from_arxiv_2024_still_works_without_categories() -> None:
+    # The 2024 fixture has no Categories field; category should default to "".
+    paper = _paper_from_arxiv_row(_ARXIV_ROW)
+    assert paper.category == ""
+
+
 # ---------------------------------------------------------------------------
 # Verdict
 # ---------------------------------------------------------------------------

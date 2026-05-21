@@ -103,27 +103,31 @@ class ArxivCsvRow(BaseModel):
     """Raw row of the arxiv producer CSV (`data/arxiv/<year>/<week>.csv`).
 
     Schema differs from the biorxiv/medrxiv `Paper`: arxiv id replaces DOI,
-    no Category or Authors columns, and the title is single-quoted.
+    no Authors column, title is single-quoted. The producer schema evolved:
+    pre-2026 weeks had `Weekday(Monday==0)` and no Categories; 2026+ weeks
+    use `ISOWeek` and add a `Categories` column with semicolon-separated
+    arxiv tags. Only the always-required fields are validated here; the
+    rest are accepted via `extra="ignore"`.
     """
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
     published: str = Field(alias="Published")
-    weekday: str = Field(alias="Weekday(Monday==0)")
-    updated: str = Field(alias="Updated")
     arxiv_id: str = Field(alias="ID")
     version: str = Field(alias="Version")
     title: str = Field(alias="Title")
+    categories: str = Field(default="", alias="Categories")
 
     def to_paper(self) -> Paper:
         """Adapt this arxiv row to the normalized `Paper` shape."""
         date_str = self.published[:10]
         iso_week = dt.date.fromisoformat(date_str).isocalendar().week
+        primary_cat = self.categories.split(";")[0].strip() if self.categories else ""
         return Paper(
             date=date_str,
             iso_week=f"{iso_week:02d}",
             doi=self.arxiv_id,
             version=self.version,
-            category="",
+            category=primary_cat,
             title=self.title.strip().strip("'").strip(),
             authors="",
         )
@@ -376,7 +380,7 @@ def is_relevant(
     return relevant
 
 
-def _urlopen_bytes(url: str, timeout: int = 15) -> bytes:
+def _urlopen_bytes(url: str, timeout: int = 30) -> bytes:
     """Read the body of an HTTPS GET.
 
     Single chokepoint for outbound HTTP so Bandit B310 is suppressed exactly
@@ -394,7 +398,9 @@ def _fetch_arxiv_abstract(arxiv_id: str) -> str:
     url = ARXIV_QUERY_URL.format(arxiv_id=arxiv_id)
     try:
         data = _urlopen_bytes(url)
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, TimeoutError) as exc:
+        # arxiv API frequently stalls mid-read; the raw ssl/socket layer
+        # raises TimeoutError, which is not a URLError subclass.
         print(f"WARN: abstract fetch failed for {arxiv_id}: {exc}", file=sys.stderr)
         return ""
     try:
@@ -412,7 +418,7 @@ def _fetch_rxiv_abstract(server: str, doi: str) -> str:
     url = RXIV_DETAILS_URL.format(server=server, doi=doi)
     try:
         payload = json.loads(_urlopen_bytes(url))
-    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         print(f"WARN: abstract fetch failed for {doi}: {exc}", file=sys.stderr)
         return ""
     collection = payload.get("collection") or []
