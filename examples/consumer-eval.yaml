@@ -25,7 +25,9 @@ permissions:
 
 jobs:
   eval:
-    uses: Lambda-Biolab/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
+    # Replace <owner> with the org/user that hosts gha-rxiv-paper-eval and
+    # pin to a tag for reproducibility (e.g. @v1.2.3).
+    uses: <owner>/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
     with:
       topic: "<your project's relevance criterion>"
       server: biorxiv
@@ -35,6 +37,8 @@ jobs:
       max_papers: 0
       model: openai/gpt-4o-mini
       enrich: true
+      # feed_repo defaults to ${caller-owner}/gha-rxiv-feed-action; override if it lives elsewhere.
+      # feed_repo: <feed-owner>/gha-rxiv-feed-action
     secrets:
       # Org/user secret holding a token with `models: read`. Create via
       # Settings -> Developer settings -> Personal access tokens (fine-grained)

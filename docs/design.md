@@ -1,11 +1,9 @@
 # Design: reusable rxiv eval workflow
 
 This repo ships a single GitHub Actions reusable workflow that consumer repos
-call to turn the weekly preprint CSV produced by
-[`Lambda-Biolab/gha-rxiv-feed-action`](https://github.com/Lambda-Biolab/gha-rxiv-feed-action)
-into a topic-filtered, abstract-enriched feed.
-
-Tracking issue: [Lambda-Biolab/gha-rxiv-feed-action#7](https://github.com/Lambda-Biolab/gha-rxiv-feed-action/issues/7).
+call to turn the weekly preprint CSV produced by a sibling
+[`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action)
+producer into a topic-filtered, abstract-enriched feed.
 
 ## Pipeline
 
@@ -119,8 +117,11 @@ schema-unification discussion.
   than the producer.
 - **Centralized prompt evolution.** Tweaks to the relevance/extraction prompt
   propagate to every consumer by tag.
-- **Versioning.** Consumers pin `eval_repo_ref` to a tag, so the prompt
-  contract is stable across runs until they explicitly bump.
+- **Versioning.** Consumers pin the workflow's `uses:` ref to a tag, so the
+  prompt contract is stable across runs until they explicitly bump. The
+  workflow auto-derives its checkout repo + sha from `github.workflow_ref`
+  / `github.workflow_sha`, so the script version always matches the
+  workflow version the caller pinned.
 
 ## Open prototype questions
 
@@ -137,7 +138,7 @@ schema-unification discussion.
 
 ```bash
 GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
-  --feed-repo Lambda-Biolab/gha-rxiv-feed-action \
+  --feed-repo <owner>/gha-rxiv-feed-action \
   --server biorxiv \
   --topic "<your topic>" \
   --categories "<your categories>" \

@@ -1,13 +1,13 @@
 # gha-rxiv-paper-eval
 
 Reusable GitHub Actions workflow that consumes the weekly preprint CSV emitted
-by [`Lambda-Biolab/gha-rxiv-feed-action`](https://github.com/Lambda-Biolab/gha-rxiv-feed-action),
-runs a topic-focused relevance filter through [GitHub Models](https://docs.github.com/en/github-models),
-and (optionally) enriches each hit with the abstract + a structured extraction.
+by a sibling [`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action)
+producer, runs a topic-focused relevance filter through
+[GitHub Models](https://docs.github.com/en/github-models), and (optionally)
+enriches each hit with the abstract + a structured extraction.
 
 > **Status:** prototype. See `docs/design.md` for the contract and open
-> questions. Tracking issue:
-> [`gha-rxiv-feed-action#7`](https://github.com/Lambda-Biolab/gha-rxiv-feed-action/issues/7).
+> questions.
 
 ## Usage
 
@@ -16,10 +16,11 @@ In a consumer repo, add a workflow that calls this one. Minimum viable:
 ```yaml
 jobs:
   eval:
-    uses: Lambda-Biolab/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
+    uses: <owner>/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
     with:
       topic: "<your project's relevance criterion>"
       categories: "<comma-separated bioRxiv categories>"
+      # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
     secrets:
       models-token: ${{ secrets.MODELS_TOKEN }}
 ```
@@ -40,7 +41,7 @@ the repo or org secret `MODELS_TOKEN`.
 
 ```bash
 GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
-  --feed-repo Lambda-Biolab/gha-rxiv-feed-action \
+  --feed-repo <owner>/gha-rxiv-feed-action \
   --server biorxiv \
   --topic "<your topic>" \
   --categories "<your categories>" \
