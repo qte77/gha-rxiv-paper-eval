@@ -108,7 +108,7 @@ jobs:
           enable-cache: true
 
       - name: Install deps
-        run: make setup
+        run: uv sync --no-dev
 
       - name: Run evaluation
         id: run

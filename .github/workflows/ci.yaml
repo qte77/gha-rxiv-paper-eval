@@ -25,13 +25,13 @@ jobs:
           enable-cache: true
 
       - name: Install deps
-        run: make sync
+        run: uv sync
 
       - name: Lint
-        run: make lint VERBOSE=1
+        run: uv run ruff check scripts/ tests/
 
       - name: Complexity gate (max=10)
-        run: make complexity
+        run: uv run complexipy scripts/
 
       - name: Tests
-        run: make test VERBOSE=1
+        run: uv run pytest tests/ -v
