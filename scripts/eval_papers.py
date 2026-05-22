@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     # arxiv asks for ~3s between requests; back-to-back fetches otherwise
     # quickly trip HTTP 429. Set to 0 in tests / when running offline.
     arxiv_request_delay_secs: float = 3.0
+    # OpenAI-compatible chat-completions endpoint. Defaults to GitHub Models;
+    # override via RXIV_EVAL_MODELS_URL to point at Azure OpenAI, a local
+    # vLLM/Ollama, an OpenAI-compatible proxy, etc. Caller still supplies the
+    # bearer token via GH_TOKEN.
+    models_url: str = GITHUB_MODELS_URL
 
 
 class Paper(BaseModel):
@@ -349,6 +354,9 @@ def _with_retry(call: Callable[[], T], settings: Settings) -> T:
 
 
 def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    url = Settings().models_url
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing non-https models URL: {url!r}")
     payload = {
         "model": model,
         "temperature": 0,
@@ -358,9 +366,10 @@ def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_to
             {"role": "user", "content": user_prompt},
         ],
     }
-    # S310: GITHUB_MODELS_URL is a constant https:// endpoint.
+    # S310: scheme is enforced above; URL is operator-supplied via
+    # RXIV_EVAL_MODELS_URL (defaults to GitHub Models).
     req = urllib.request.Request(  # noqa: S310
-        GITHUB_MODELS_URL,
+        url,
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
