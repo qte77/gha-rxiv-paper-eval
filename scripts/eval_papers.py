@@ -110,6 +110,11 @@ def _paper_url(server: str, paper_id: str) -> str:
     return template.format(id=paper_id)
 
 
+def _artifact_name(server: str, year: str, week: str) -> str:
+    """Build the artifact-upload name for a given (server, year, week) run."""
+    return f"rxiv-eval-{server}-{year}-w{week}"
+
+
 class Settings(BaseSettings):
     """Process-wide knobs sourced from RXIV_EVAL_* env vars."""
 
@@ -501,6 +506,41 @@ def extract_fields(abstract: str, *, model: str, system_prompt: str) -> Extracte
         return ExtractedFields.model_validate({"_raw": raw})
 
 
+def write_workflow_outputs(
+    output_dir: Path, *, relevant_count: int, artifact_name: str
+) -> None:
+    """Write `key=value` lines for the YAML caller to append to `$GITHUB_OUTPUT`.
+
+    Centralizing the format here removes the inline-shell csv-count and
+    artifact-name construction from `eval-papers.yaml`.
+    """
+    lines = [
+        f"relevant_count={relevant_count}",
+        f"artifact_name={artifact_name}",
+    ]
+    (output_dir / ".workflow_outputs").write_text("\n".join(lines) + "\n")
+
+
+def append_step_summary(
+    output_dir: Path, *, server: str, year: str, week: str
+) -> None:
+    """Mirror `summary.md` into `$GITHUB_STEP_SUMMARY` for inline rendering.
+
+    No-op when the env var is unset or empty (i.e. outside GitHub Actions).
+    Appends an artifact-name footer so the zip is discoverable from the
+    rendered summary.
+    """
+    target = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not target:
+        return
+    summary_path = output_dir / "summary.md"
+    body = summary_path.read_text() if summary_path.exists() else ""
+    footer = f"\n---\n*Artifact: {_artifact_name(server, year, week)}*\n"
+    with open(target, "a", encoding="utf-8") as f:
+        f.write(body)
+        f.write(footer)
+
+
 def write_summary(
     output_dir: Path,
     *,
@@ -652,6 +692,13 @@ def main() -> int:
         total=total,
         after_prefilter=after_prefilter,
         relevant=[p for p, _ in relevant],
+    )
+
+    append_step_summary(output_dir, server=args.server, year=year, week=week)
+    write_workflow_outputs(
+        output_dir,
+        relevant_count=len(relevant),
+        artifact_name=_artifact_name(args.server, year, week),
     )
 
     print(f"Done. Relevant: {len(relevant)}/{after_prefilter}", file=sys.stderr)

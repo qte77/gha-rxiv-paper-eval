@@ -862,5 +862,130 @@ class PaperUrlTests(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# ArtifactNameTests
+# ---------------------------------------------------------------------------
+
+
+class ArtifactNameTests(unittest.TestCase):
+    def test_biorxiv_two_digit_week(self) -> None:
+        self.assertEqual(
+            eval_papers._artifact_name("biorxiv", "2026", "21"),
+            "rxiv-eval-biorxiv-2026-w21",
+        )
+
+    def test_arxiv_zero_padded_week(self) -> None:
+        self.assertEqual(
+            eval_papers._artifact_name("arxiv", "2026", "01"),
+            "rxiv-eval-arxiv-2026-w01",
+        )
+
+    def test_medrxiv(self) -> None:
+        self.assertEqual(
+            eval_papers._artifact_name("medrxiv", "2025", "53"),
+            "rxiv-eval-medrxiv-2025-w53",
+        )
+
+
+# ---------------------------------------------------------------------------
+# AppendStepSummaryTests
+# ---------------------------------------------------------------------------
+
+
+class AppendStepSummaryTests(unittest.TestCase):
+    """`append_step_summary` mirrors `output/summary.md` into $GITHUB_STEP_SUMMARY.
+
+    The function is the python-side replacement for inline shell that cat'd the
+    summary into the workflow's step-summary page. Behavior matrix:
+      - env var set + summary.md exists  -> append both summary body + artifact footer
+      - env var unset                    -> no-op (no exception)
+      - env var set to empty string      -> no-op
+    """
+
+    def _write_summary(self, output_dir: pathlib.Path, body: str) -> None:
+        (output_dir / "summary.md").write_text(body)
+
+    def test_appends_summary_and_artifact_footer_when_env_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir) / "output"
+            out.mkdir()
+            self._write_summary(out, "# rxiv eval — biorxiv 2026-W21\n\nbody\n")
+            step_summary = pathlib.Path(tmpdir) / "step_summary.md"
+            step_summary.write_text("")  # GHA pre-creates this file
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(step_summary)}):
+                eval_papers.append_step_summary(out, server="biorxiv", year="2026", week="21")
+            content = step_summary.read_text()
+            self.assertIn("# rxiv eval — biorxiv 2026-W21", content)
+            self.assertIn("body", content)
+            self.assertIn("rxiv-eval-biorxiv-2026-w21", content)
+
+    def test_noop_when_env_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir) / "output"
+            out.mkdir()
+            self._write_summary(out, "anything\n")
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("GITHUB_STEP_SUMMARY", None)
+                # Must not raise; must not write anywhere observable.
+                eval_papers.append_step_summary(out, server="biorxiv", year="2026", week="21")
+
+    def test_noop_when_env_empty_string(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir) / "output"
+            out.mkdir()
+            self._write_summary(out, "anything\n")
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}):
+                eval_papers.append_step_summary(out, server="biorxiv", year="2026", week="21")
+
+    def test_appends_instead_of_overwriting(self) -> None:
+        # GHA may have prior step summary content from earlier steps; we must
+        # not clobber it.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir) / "output"
+            out.mkdir()
+            self._write_summary(out, "new content\n")
+            step_summary = pathlib.Path(tmpdir) / "step_summary.md"
+            step_summary.write_text("pre-existing\n")
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(step_summary)}):
+                eval_papers.append_step_summary(out, server="biorxiv", year="2026", week="21")
+            content = step_summary.read_text()
+            self.assertIn("pre-existing", content)
+            self.assertIn("new content", content)
+
+
+# ---------------------------------------------------------------------------
+# WriteWorkflowOutputsTests
+# ---------------------------------------------------------------------------
+
+
+class WriteWorkflowOutputsTests(unittest.TestCase):
+    """`write_workflow_outputs` writes a key=value file the YAML caller appends
+    to `$GITHUB_OUTPUT`. One line per output, format `key=value\\n`."""
+
+    def test_writes_relevant_count_and_artifact_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_workflow_outputs(
+                out,
+                relevant_count=7,
+                artifact_name="rxiv-eval-biorxiv-2026-w21",
+            )
+            content = (out / ".workflow_outputs").read_text()
+            lines = content.splitlines()
+            self.assertIn("relevant_count=7", lines)
+            self.assertIn("artifact_name=rxiv-eval-biorxiv-2026-w21", lines)
+
+    def test_file_ends_with_newline(self) -> None:
+        # GHA's $GITHUB_OUTPUT is parsed line-by-line; a trailing newline keeps
+        # the last entry from being merged with the next step's output.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_workflow_outputs(
+                out, relevant_count=0, artifact_name="rxiv-eval-arxiv-2026-w01"
+            )
+            content = (out / ".workflow_outputs").read_text()
+            self.assertTrue(content.endswith("\n"))
+
+
 if __name__ == "__main__":
     unittest.main()
