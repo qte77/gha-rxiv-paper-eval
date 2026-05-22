@@ -161,27 +161,29 @@ def test_verdict_roundtrip_through_json() -> None:
 def test_extracted_fields_defaults() -> None:
     ef = ExtractedFields()
     assert ef.summary == ""
-    assert ef.organisms == []
+    assert ef.subjects == []
     assert ef.methods == []
     assert ef.key_findings == []
-    assert ef.study_type == "other"
+    assert ef.study_type == ""
 
 
 def test_extracted_fields_parses_valid_json() -> None:
     raw = (
-        '{"summary": "Discovered X.", "organisms": ["E. coli"], '
+        '{"summary": "Discovered X.", "subjects": ["E. coli"], '
         '"methods": ["MD"], "key_findings": ["binds Y"], "study_type": "in_silico"}'
     )
     ef = ExtractedFields.model_validate_json(raw)
     assert ef.summary == "Discovered X."
-    assert ef.organisms == ["E. coli"]
+    assert ef.subjects == ["E. coli"]
     assert ef.study_type == "in_silico"
 
 
-def test_extracted_fields_rejects_unknown_study_type() -> None:
-    bad = '{"study_type": "speculative"}'
-    with pytest.raises(ValidationError):
-        ExtractedFields.model_validate_json(bad)
+def test_extracted_fields_accepts_any_study_type_string() -> None:
+    # study_type is plain str so it works across servers (bio in_silico,
+    # arxiv theoretical, medrxiv clinical_trial, etc.).
+    raw = '{"study_type": "speculative"}'
+    ef = ExtractedFields.model_validate_json(raw)
+    assert ef.study_type == "speculative"
 
 
 def test_extracted_fields_allows_extra_keys() -> None:

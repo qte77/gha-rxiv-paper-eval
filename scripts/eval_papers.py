@@ -29,7 +29,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 # FIXME: drop defusedxml + Atom parsing once the producer (gha-rxiv-feed-action)
 # emits a normalized arxiv CSV that already carries the abstract. See
@@ -48,14 +48,37 @@ DEFAULT_RELEVANCE_PROMPT = (
     "Be conservative: when uncertain, answer NO."
 )
 
-DEFAULT_EXTRACTION_PROMPT = (
+_EXTRACTION_PROMPT_TEMPLATE = (
     "Extract structured fields from the abstract. "
     "Return ONLY a JSON object with these keys: "
-    "summary (one sentence), organisms (list[str]), methods (list[str]), "
-    "key_findings (list[str]), study_type "
-    "(one of: in_silico, in_vitro, in_vivo, clinical, review, other). "
+    "summary (one sentence), subjects (list[str]: {subjects_hint}), "
+    "methods (list[str]), key_findings (list[str]), "
+    "study_type (e.g. {study_type_hint}). "
     "If a field is unknown, use an empty string or empty list."
 )
+
+# Per-server hints for the generic extraction prompt. The schema is fixed
+# (summary/subjects/methods/key_findings/study_type) but the example values
+# differ per domain so the model picks domain-appropriate labels.
+_EXTRACTION_PROMPT_HINTS: dict[str, dict[str, str]] = {
+    "biorxiv": {
+        "subjects_hint": "organisms, cell lines, or biological systems",
+        "study_type_hint": "in_silico, in_vitro, in_vivo, review",
+    },
+    "medrxiv": {
+        "subjects_hint": "patient cohorts, conditions, or interventions",
+        "study_type_hint": "clinical_trial, observational, meta_analysis, review",
+    },
+    "arxiv": {
+        "subjects_hint": "datasets, models, benchmarks, or systems under study",
+        "study_type_hint": "theoretical, empirical, system, dataset, survey",
+    },
+}
+
+DEFAULT_EXTRACTION_PROMPTS: dict[str, str] = {
+    server: _EXTRACTION_PROMPT_TEMPLATE.format(**hints)
+    for server, hints in _EXTRACTION_PROMPT_HINTS.items()
+}
 
 # Default topic targeting the qte77 GitHub account's themes (see qte77/qte77
 # README: META/KERNEL/MECHANISM authority chain, agentic dev across 30+ repos,
@@ -71,8 +94,6 @@ ARXIV_QUERY_URL = "https://export.arxiv.org/api/query?id_list={arxiv_id}"
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
-
-StudyType = Literal["in_silico", "in_vitro", "in_vivo", "clinical", "review", "other"]
 
 
 class Settings(BaseSettings):
@@ -153,10 +174,10 @@ class ExtractedFields(BaseModel):
 
     model_config = ConfigDict(extra="allow")
     summary: str = ""
-    organisms: list[str] = Field(default_factory=list)
+    subjects: list[str] = Field(default_factory=list)
     methods: list[str] = Field(default_factory=list)
     key_findings: list[str] = Field(default_factory=list)
-    study_type: StudyType = "other"
+    study_type: str = ""
 
 
 def parse_args() -> argparse.Namespace:
@@ -529,10 +550,14 @@ def _run_relevance_pass(
 def _run_extraction_pass(
     relevant: list[tuple[Paper, str]],
     *,
+    server: str,
     model: str,
     output_dir: Path,
 ) -> None:
-    extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or DEFAULT_EXTRACTION_PROMPT
+    default_prompt = DEFAULT_EXTRACTION_PROMPTS.get(
+        server, DEFAULT_EXTRACTION_PROMPTS["biorxiv"]
+    )
+    extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or default_prompt
     with (output_dir / "extracts.jsonl").open("w") as f:
         for paper, abstract in relevant:
             try:
@@ -591,7 +616,9 @@ def main() -> int:
     write_papers([p for p, _ in relevant], output_dir / "relevant.csv")
 
     if args.enrich and relevant:
-        _run_extraction_pass(relevant, model=args.model, output_dir=output_dir)
+        _run_extraction_pass(
+            relevant, server=args.server, model=args.model, output_dir=output_dir
+        )
 
     write_summary(
         output_dir,
