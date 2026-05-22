@@ -132,10 +132,7 @@ scopes) Models access.
 
 ## Docs
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — components, data flow, trust boundaries.
 - [`docs/design.md`](docs/design.md) — full pipeline + per-server schema adapters.
-- [`USERSTORY.md`](USERSTORY.md) — who this is for.
-- [`ROADMAP.md`](ROADMAP.md) — what's next.
 - [`CHANGELOG.md`](CHANGELOG.md) — what changed.
 
 ## Layout
