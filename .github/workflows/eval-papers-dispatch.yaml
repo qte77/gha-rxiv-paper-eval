@@ -63,7 +63,14 @@ jobs:
       year: ${{ inputs.year }}
       week: ${{ inputs.week }}
       categories: ${{ inputs.categories }}
-      max_papers: ${{ inputs.max_papers }}
+      # fromJSON wrappers force JSON coercion of typed workflow_dispatch
+      # inputs before passing to workflow_call. Without them GHA fails the
+      # reusable-workflow startup with no jobs running (PR #44 tried to drop
+      # these on actionlint's advice — actionlint's static type model does
+      # not match GHA's runtime serialization). actionlint emits a spurious
+      # "bool/number cannot be assigned to string" warning on these lines;
+      # the runtime behavior contradicts the warning, so it's left as-is.
+      max_papers: ${{ fromJSON(inputs.max_papers) }}
       model: ${{ inputs.model }}
-      enrich: ${{ inputs.enrich }}
+      enrich: ${{ fromJSON(inputs.enrich) }}
       feed_repo: ${{ inputs.feed_repo }}
