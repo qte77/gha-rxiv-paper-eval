@@ -63,7 +63,7 @@ jobs:
       year: ${{ inputs.year }}
       week: ${{ inputs.week }}
       categories: ${{ inputs.categories }}
-      max_papers: ${{ fromJSON(inputs.max_papers) }}
+      max_papers: ${{ inputs.max_papers }}
       model: ${{ inputs.model }}
-      enrich: ${{ fromJSON(inputs.enrich) }}
+      enrich: ${{ inputs.enrich }}
       feed_repo: ${{ inputs.feed_repo }}
