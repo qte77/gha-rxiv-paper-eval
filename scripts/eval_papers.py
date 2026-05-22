@@ -95,6 +95,20 @@ ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
 
+# arxiv ids are not DOIs; doi.org won't resolve them. Bio servers use real
+# DOIs registered with CrossRef so doi.org is the canonical resolver.
+_PAPER_URL_TEMPLATES: dict[str, str] = {
+    "arxiv": "https://arxiv.org/abs/{id}",
+    "biorxiv": "https://doi.org/{id}",
+    "medrxiv": "https://doi.org/{id}",
+}
+
+
+def _paper_url(server: str, paper_id: str) -> str:
+    """Return the canonical web URL for a paper given its server and id."""
+    template = _PAPER_URL_TEMPLATES.get(server, "https://doi.org/{id}")
+    return template.format(id=paper_id)
+
 
 class Settings(BaseSettings):
     """Process-wide knobs sourced from RXIV_EVAL_* env vars."""
@@ -502,7 +516,7 @@ def write_summary(
         "",
     ]
     for p in relevant:
-        lines.append(f"- [{p.title}](https://doi.org/{p.doi}) — *{p.category}*")
+        lines.append(f"- [{p.title}]({_paper_url(server, p.doi)}) — *{p.category}*")
     (output_dir / "summary.md").write_text("\n".join(lines) + "\n")
 
 

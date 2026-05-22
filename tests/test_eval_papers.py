@@ -806,5 +806,37 @@ class DefaultTopicTests(unittest.TestCase):
         self.assertEqual(args.topic, eval_papers.DEFAULT_TOPIC)
 
 
+# ---------------------------------------------------------------------------
+# PaperUrlTests
+# ---------------------------------------------------------------------------
+
+
+class PaperUrlTests(unittest.TestCase):
+    def test_arxiv_uses_arxiv_abs_url(self) -> None:
+        self.assertEqual(
+            eval_papers._paper_url("arxiv", "2406.09418"),
+            "https://arxiv.org/abs/2406.09418",
+        )
+
+    def test_biorxiv_uses_doi_resolver(self) -> None:
+        self.assertEqual(
+            eval_papers._paper_url("biorxiv", "10.1101/2024.09.07.000001"),
+            "https://doi.org/10.1101/2024.09.07.000001",
+        )
+
+    def test_medrxiv_uses_doi_resolver(self) -> None:
+        self.assertEqual(
+            eval_papers._paper_url("medrxiv", "10.1101/2024.09.07.000002"),
+            "https://doi.org/10.1101/2024.09.07.000002",
+        )
+
+    def test_unknown_server_falls_back_to_doi(self) -> None:
+        # Defensive: any future server defaults to the doi.org resolver.
+        self.assertEqual(
+            eval_papers._paper_url("chemrxiv", "10.26434/x"),
+            "https://doi.org/10.26434/x",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
