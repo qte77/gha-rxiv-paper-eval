@@ -1293,5 +1293,49 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
         self.assertEqual(rc, 0)
 
 
+# ---------------------------------------------------------------------------
+# DefaultRelevancePromptTests
+# ---------------------------------------------------------------------------
+
+
+class DefaultRelevancePromptTests(unittest.TestCase):
+    """Default relevance prompt must not bias the LLM toward NO on borderline
+    methodology papers (#5). The pre-fix wording — "strict", "if and only if",
+    "when uncertain, answer NO" — produced false negatives across multiple
+    consumer repos. The replacement permits transferable methodology and tips
+    borderline toward YES.
+    """
+
+    def test_drops_strict_framing(self) -> None:
+        self.assertNotIn("strict", eval_papers.DEFAULT_RELEVANCE_PROMPT)
+
+    def test_drops_if_and_only_if(self) -> None:
+        self.assertNotIn("if and only if", eval_papers.DEFAULT_RELEVANCE_PROMPT)
+
+    def test_drops_when_uncertain_answer_no(self) -> None:
+        prompt_lower = eval_papers.DEFAULT_RELEVANCE_PROMPT.lower()
+        self.assertNotIn("when uncertain, answer no", prompt_lower)
+
+    def test_mentions_methodology(self) -> None:
+        self.assertIn("methodology", eval_papers.DEFAULT_RELEVANCE_PROMPT.lower())
+
+    def test_tips_borderline_toward_yes(self) -> None:
+        prompt_lower = eval_papers.DEFAULT_RELEVANCE_PROMPT.lower()
+        # Either "borderline" or "transferable" plus a "yes" lean; the exact
+        # phrasing can evolve, but a tiebreaker toward YES must be present.
+        self.assertIn("borderline", prompt_lower)
+        self.assertIn("yes", prompt_lower)
+
+    def test_preserves_topic_placeholder(self) -> None:
+        # `{topic}` is consumed by `.format(topic=args.topic)` at runtime —
+        # losing it breaks the user-facing CLI contract.
+        self.assertIn("{topic}", eval_papers.DEFAULT_RELEVANCE_PROMPT)
+
+    def test_preserves_yes_or_no_response_contract(self) -> None:
+        # `is_relevant` parses the response by looking at the first token; the
+        # prompt must still ask for a YES/NO answer.
+        self.assertIn("YES or NO", eval_papers.DEFAULT_RELEVANCE_PROMPT)
+
+
 if __name__ == "__main__":
     unittest.main()

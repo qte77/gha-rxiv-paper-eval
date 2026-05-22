@@ -42,10 +42,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 DEFAULT_RELEVANCE_PROMPT = (
-    "You are a strict relevance classifier. "
-    "Reply with a single token: YES or NO. "
-    "A paper is relevant if and only if it could plausibly inform research on: {topic}. "
-    "Be conservative: when uncertain, answer NO."
+    "You are a relevance classifier. Reply with a single token: YES or NO. "
+    "A paper is relevant if it could plausibly inform research on: {topic}. "
+    "Methodology papers (computational tools, simulation methods, ML / AI "
+    "frameworks, structure-guided design pipelines, scaffold-engineering "
+    "techniques) count even when their experimental system differs from the "
+    "topic's primary targets, provided the methodology is transferable. "
+    "When borderline, prefer YES if methodology is transferable."
 )
 
 _EXTRACTION_PROMPT_TEMPLATE = (
