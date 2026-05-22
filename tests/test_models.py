@@ -142,34 +142,15 @@ def test_verdict_basic_construction() -> None:
 
 
 def test_verdict_serializes_to_dict() -> None:
-    v = Verdict(doi="10.1101/x", relevant=False, raw="NO", reason="off-topic")
+    v = Verdict(doi="10.1101/x", relevant=False, raw="NO")
     payload = v.model_dump()
-    assert payload == {
-        "doi": "10.1101/x",
-        "relevant": False,
-        "raw": "NO",
-        "reason": "off-topic",
-    }
+    assert payload == {"doi": "10.1101/x", "relevant": False, "raw": "NO"}
 
 
 def test_verdict_roundtrip_through_json() -> None:
-    v = Verdict(doi="10.1101/x", relevant=True, raw="YES", reason="matches topic")
+    v = Verdict(doi="10.1101/x", relevant=True, raw="YES")
     rehydrated = Verdict.model_validate_json(v.model_dump_json())
     assert rehydrated == v
-
-
-def test_verdict_reason_defaults_empty() -> None:
-    # `reason` is optional so unparseable / pre-format model output stays usable.
-    v = Verdict(doi="10.1101/x", relevant=True, raw="YES")
-    assert v.reason == ""
-
-
-def test_verdict_loads_legacy_json_without_reason() -> None:
-    # Cache files written before the `reason` field existed must still load.
-    legacy = '{"doi":"10.1101/x","relevant":true,"raw":"YES"}'
-    v = Verdict.model_validate_json(legacy)
-    assert v.reason == ""
-    assert v.relevant is True
 
 
 # ---------------------------------------------------------------------------

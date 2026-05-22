@@ -63,11 +63,7 @@ Secrets:
 ## Determinism
 
 - `temperature 0` on both passes for reproducibility week-over-week.
-- Relevance prompt asks for a single-line JSON object
-  `{"verdict":"YES|NO","reason":"<≤15-word clause>"}`. `max_tokens=80`
-  leaves room for the JSON envelope plus the reason. `_parse_relevance_response`
-  falls back to a `startswith("YES")` check if the model emits prose,
-  so bad output classifies but loses the reason rather than crashing.
+- Relevance prompt is constrained to a single token (`YES`/`NO`).
 - Extraction prompt asks for a fixed JSON schema; non-JSON responses are
   preserved verbatim under `_raw` for triage rather than dropped.
 

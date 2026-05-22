@@ -7,14 +7,6 @@ entries are PR-scoped.
 ## [Unreleased]
 
 ### Added
-- Per-paper LLM reasoning in `summary.md` for both YES and NO verdicts.
-  `Verdict.reason` carries the model's short justification; the relevance
-  prompt now requests a single-line JSON `{"verdict","reason"}` envelope
-  (`max_tokens=4 → 80`); `summary.md` gains an "Excluded papers (LLM said
-  NO)" section with the same "Why:" lines. Falls back gracefully to
-  `startswith("YES")` if the model ignores the JSON contract.
-- Retry + polite 3s delay on arxiv abstract fetches via the generic
-  `_with_retry` helper; `Settings.arxiv_request_delay_secs` is overridable (#34).
 - Makefile with `sync`/`setup`/`test`/`lint`/`complexity`/`validate`/`smoke`/`help` recipes (#27).
 - `Install uv` step + `uv sync --no-dev` in the reusable eval workflow (#23).
 - `DEFAULT_TOPIC` targeting the qte77 account themes; `--topic` becomes optional (#21).
