@@ -7,6 +7,7 @@ entries are PR-scoped.
 ## [Unreleased]
 
 ### Added
+- `examples/consumer-eval.yaml`: drop-in workflow for downstream repos plus a sample triage job.
 - Makefile with `sync`/`setup`/`test`/`lint`/`complexity`/`validate`/`smoke`/`help` recipes (#27).
 - `Install uv` step + `uv sync --no-dev` in the reusable eval workflow (#23).
 - `DEFAULT_TOPIC` targeting the qte77 account themes; `--topic` becomes optional (#21).
@@ -14,8 +15,8 @@ entries are PR-scoped.
   fetcher, manual-dispatch wrapper (#16).
 
 ### Changed
-- CI and the reusable eval workflow drive quality gates + dep install via Make recipes (#28).
-- Bumped `astral-sh/setup-uv` from v6 (Node 20, deprecated) to v8.1.0 (Node 24); removed `examples/consumer-eval.yaml` in favor of the in-repo dispatch wrapper (#25).
+- CI workflows pin literal `uv run …` recipes; the Makefile stays for local-dev convenience but is no longer the source of truth for CI gates.
+- Bumped `astral-sh/setup-uv` from v6 (Node 20, deprecated) to v8.1.0 (Node 24) (#25).
 - GitHub Models calls use the auto-provided `GITHUB_TOKEN` + `permissions: models: read`; the explicit `MODELS_TOKEN` PAT requirement is gone (#24).
 - Reusable workflow auto-derives its checkout repo + ref from `github.workflow_ref`/`github.workflow_sha`; `feed_repo` defaults to `${caller-owner}/gha-rxiv-feed-action`; `python_version` is a workflow input (#22).
 - Ruff `select` widened to the full strict reference set: `E,F,I,N,W,UP,B,S,SIM,RUF,PT,ANN,TCH,PGH,C90,D` with pydocstyle Google convention (#17, #20).
