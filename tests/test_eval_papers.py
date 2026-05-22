@@ -380,6 +380,7 @@ class ExtractFieldsErrorIsCaughtTests(unittest.TestCase):
                 "GH_TOKEN": "fake-token",
                 "RXIV_EVAL_OFFLINE": "1",
                 "RXIV_EVAL_STUB_MODE": "yes",
+                "RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0",
             },
         )
         self._env.start()
@@ -577,6 +578,7 @@ class OfflineEndToEndTests(unittest.TestCase):
                 "RXIV_EVAL_OFFLINE": "1",
                 "RXIV_EVAL_STUB_MODE": "hash",
                 "RXIV_EVAL_RETRY_BASE_SECS": "0.01",
+                "RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0",
             },
         )
         self._env.start()
@@ -744,6 +746,7 @@ class CategoriesWarningWithArxivTests(unittest.TestCase):
                 "RXIV_EVAL_OFFLINE": "1",
                 "RXIV_EVAL_STUB_MODE": "hash",
                 "RXIV_EVAL_RETRY_BASE_SECS": "0.01",
+                "RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0",
             },
         )
         self._env.start()
@@ -985,6 +988,309 @@ class WriteWorkflowOutputsTests(unittest.TestCase):
             )
             content = (out / ".workflow_outputs").read_text()
             self.assertTrue(content.endswith("\n"))
+
+
+# ---------------------------------------------------------------------------
+# RunRelevancePassTests
+# ---------------------------------------------------------------------------
+
+
+class RunRelevancePassTests(unittest.TestCase):
+    """`_run_relevance_pass` must count how many LLM calls failed so the
+    pipeline can distinguish a true-negative week from a rate-limited week
+    (issue #6). Pre-fix it silently dropped failed papers via WARN+continue.
+    """
+
+    def setUp(self) -> None:
+        # Default 0 so non-throttle tests don't pay the 1.5s/paper inter-call
+        # gap. Throttle-specific tests override via their own patch.dict.
+        self._env = patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0"})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _papers(self, n: int) -> list:
+        return [
+            eval_papers.Paper(
+                date="2026-04-06",
+                iso_week="15",
+                doi=f"10.1101/2024.09.07.{i:06d}",
+                version="1",
+                category="microbiology",
+                title=f"Paper {i}",
+                authors="Doe, J.",
+            )
+            for i in range(n)
+        ]
+
+    def test_returns_relevant_list_and_call_failure_count(self) -> None:
+        # is_relevant raises on the 2nd and 4th call -> 2 failures, 3 successes.
+        papers = self._papers(5)
+        call_count = {"n": 0}
+
+        def fake_is_relevant(paper, abstract, *, model, system_prompt, output_dir=None):
+            call_count["n"] += 1
+            if call_count["n"] in (2, 4):
+                raise RuntimeError("simulated 429")
+            return True
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            with (
+                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
+                patch.object(eval_papers, "is_relevant", side_effect=fake_is_relevant),
+            ):
+                relevant, call_failures = eval_papers._run_relevance_pass(
+                    papers,
+                    server="biorxiv",
+                    model="openai/gpt-4o-mini",
+                    relevance_prompt="sys",
+                    output_dir=out,
+                )
+
+        self.assertEqual(len(relevant), 3)
+        self.assertEqual(call_failures, 2)
+
+    def test_zero_failures_when_all_calls_succeed(self) -> None:
+        papers = self._papers(3)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            with (
+                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
+                patch.object(eval_papers, "is_relevant", return_value=True),
+            ):
+                relevant, call_failures = eval_papers._run_relevance_pass(
+                    papers,
+                    server="biorxiv",
+                    model="openai/gpt-4o-mini",
+                    relevance_prompt="sys",
+                    output_dir=out,
+                )
+        self.assertEqual(len(relevant), 3)
+        self.assertEqual(call_failures, 0)
+
+    def test_sleeps_between_calls_at_configured_interval(self) -> None:
+        # 5 papers -> 4 sleeps (between, not after the last). The interval is
+        # tunable via RXIV_EVAL_LLM_CALL_INTERVAL_SECS to fight steady-state
+        # rate limits without forking the script.
+        papers = self._papers(5)
+        sleep_calls: list[float] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            with (
+                patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0.5"}),
+                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
+                patch.object(eval_papers, "is_relevant", return_value=True),
+                patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+            ):
+                eval_papers._run_relevance_pass(
+                    papers,
+                    server="biorxiv",
+                    model="openai/gpt-4o-mini",
+                    relevance_prompt="sys",
+                    output_dir=out,
+                )
+        self.assertEqual(sleep_calls, [0.5, 0.5, 0.5, 0.5])
+
+    def test_no_sleep_with_single_paper(self) -> None:
+        # 1 paper -> 0 throttle sleeps (no inter-call gap to bridge).
+        papers = self._papers(1)
+        sleep_calls: list[float] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            with (
+                patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "9.9"}),
+                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
+                patch.object(eval_papers, "is_relevant", return_value=True),
+                patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+            ):
+                eval_papers._run_relevance_pass(
+                    papers,
+                    server="biorxiv",
+                    model="openai/gpt-4o-mini",
+                    relevance_prompt="sys",
+                    output_dir=out,
+                )
+        self.assertEqual(sleep_calls, [])
+
+    def test_throttle_fires_even_on_call_failures(self) -> None:
+        # If is_relevant raises, the throttle still sleeps before the next
+        # call — keeping steady-state pacing under partial-failure runs.
+        papers = self._papers(3)
+        sleep_calls: list[float] = []
+
+        def fake_is_relevant(paper, abstract, **kw):
+            raise RuntimeError("simulated 429")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            with (
+                patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0.25"}),
+                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
+                patch.object(eval_papers, "is_relevant", side_effect=fake_is_relevant),
+                patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
+            ):
+                eval_papers._run_relevance_pass(
+                    papers,
+                    server="biorxiv",
+                    model="openai/gpt-4o-mini",
+                    relevance_prompt="sys",
+                    output_dir=out,
+                )
+        self.assertEqual(sleep_calls, [0.25, 0.25])
+
+
+# ---------------------------------------------------------------------------
+# WriteSummaryFailureRateTests
+# ---------------------------------------------------------------------------
+
+
+class WriteSummaryFailureRateTests(unittest.TestCase):
+    """`write_summary` must surface the LLM call-failure rate so a 100%-rate-
+    limited week is visibly distinguishable from a true-negative week (#6).
+    """
+
+    def test_emits_call_failure_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_summary(
+                out,
+                server="biorxiv",
+                year="2026",
+                week="15",
+                topic="anything",
+                total=531,
+                after_prefilter=424,
+                relevant=[],
+                call_failures=424,
+            )
+            content = (out / "summary.md").read_text()
+            self.assertIn("LLM call failures: 424 / 424 (100 %)", content)
+
+    def test_omits_call_failure_line_when_zero_after_prefilter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_summary(
+                out,
+                server="biorxiv",
+                year="2026",
+                week="15",
+                topic="anything",
+                total=0,
+                after_prefilter=0,
+                relevant=[],
+                call_failures=0,
+            )
+            content = (out / "summary.md").read_text()
+            self.assertNotIn("LLM call failures", content)
+
+    def test_partial_failure_rate_rounds_to_nearest_percent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_summary(
+                out,
+                server="biorxiv",
+                year="2026",
+                week="15",
+                topic="anything",
+                total=10,
+                after_prefilter=10,
+                relevant=[],
+                call_failures=3,
+            )
+            content = (out / "summary.md").read_text()
+            self.assertIn("LLM call failures: 3 / 10 (30 %)", content)
+
+
+# ---------------------------------------------------------------------------
+# MainExitCodeFailureRateTests
+# ---------------------------------------------------------------------------
+
+
+def _feed_csv(n: int) -> str:
+    """Build a `n`-row biorxiv-format CSV fixture inline."""
+    header = "Date,ISOWeek,DOI,Version,Category,Title,Authors\n"
+    rows = "".join(
+        f"2026-04-06,15,10.1101/2024.09.07.{i:06d},1,microbiology,"
+        f"Paper {i},Author {i}.\n"
+        for i in range(n)
+    )
+    return header + rows
+
+
+class MainExitCodeFailureRateTests(unittest.TestCase):
+    """When >50% of LLM calls fail (after retries), `main()` must exit non-zero
+    so a 100%-rate-limited weekly run cannot pass CI as a true-negative (#6).
+    Boundary: exactly 50% still exits 0 (strict greater-than threshold).
+    """
+
+    def setUp(self) -> None:
+        self._env = patch.dict(
+            os.environ,
+            {
+                "GH_TOKEN": "fake-token",
+                "RXIV_EVAL_OFFLINE": "1",
+                "RXIV_EVAL_STUB_MODE": "yes",
+                "RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0",
+                "RXIV_EVAL_RETRY_BASE_SECS": "0.01",
+            },
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _run_main_with_fixture(
+        self, num_papers: int, num_failures: int
+    ) -> int:
+        """Run `main()` against an inline `num_papers`-row feed, with
+        `is_relevant` raising on the first `num_failures` papers.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            (out / "feed.csv").write_text(_feed_csv(num_papers))
+
+            call_count = {"n": 0}
+
+            def fake_is_relevant(paper, abstract, **kw):
+                call_count["n"] += 1
+                if call_count["n"] <= num_failures:
+                    raise RuntimeError("simulated 429")
+                return True
+
+            def fake_fetch_feed(feed_repo, server, year, week, dest):
+                pass  # feed.csv already written above
+
+            saved_argv = sys.argv[:]
+            try:
+                sys.argv = [
+                    "eval_papers.py",
+                    "--feed-repo", "any/repo",
+                    "--topic", "test topic",
+                    "--categories", "microbiology",
+                    "--max-papers", "0",
+                    "--output-dir", str(out),
+                ]
+                with (
+                    patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed),
+                    patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
+                    patch.object(eval_papers, "is_relevant", side_effect=fake_is_relevant),
+                ):
+                    return eval_papers.main()
+            finally:
+                sys.argv = saved_argv
+
+    def test_returns_nonzero_when_failure_rate_above_threshold(self) -> None:
+        # 3/5 = 60% > 50% -> exit 2
+        rc = self._run_main_with_fixture(num_papers=5, num_failures=3)
+        self.assertEqual(rc, 2)
+
+    def test_returns_zero_at_exactly_fifty_percent(self) -> None:
+        # 2/4 = 50% -> NOT > 50% -> exit 0
+        rc = self._run_main_with_fixture(num_papers=4, num_failures=2)
+        self.assertEqual(rc, 0)
+
+    def test_returns_zero_on_zero_papers(self) -> None:
+        # empty feed after prefilter -> must not raise ZeroDivisionError
+        rc = self._run_main_with_fixture(num_papers=0, num_failures=0)
+        self.assertEqual(rc, 0)
 
 
 if __name__ == "__main__":

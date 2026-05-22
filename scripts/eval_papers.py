@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     # arxiv asks for ~3s between requests; back-to-back fetches otherwise
     # quickly trip HTTP 429. Set to 0 in tests / when running offline.
     arxiv_request_delay_secs: float = 3.0
+    # Inter-call gap between LLM relevance requests. GitHub Models free tier
+    # is roughly 10-20 req/min; per-call retry can mask short bursts but the
+    # honest fix is steady-state throttling. Set to 0 in tests.
+    llm_call_interval_secs: float = 1.5
     # OpenAI-compatible chat-completions endpoint. Defaults to GitHub Models;
     # override via RXIV_EVAL_MODELS_URL to point at Azure OpenAI, a local
     # vLLM/Ollama, an OpenAI-compatible proxy, etc. Caller still supplies the
@@ -551,8 +555,14 @@ def write_summary(
     total: int,
     after_prefilter: int,
     relevant: list[Paper],
+    call_failures: int = 0,
 ) -> None:
-    """Render the run's `summary.md` artifact."""
+    """Render the run's `summary.md` artifact.
+
+    `call_failures` is the count of LLM calls that raised after retries
+    exhausted; surfacing it is critical because a 100%-rate-limited week
+    otherwise looks identical to a true-negative week (issue #6).
+    """
     lines = [
         f"# rxiv eval — {server} {year}-W{week}",
         "",
@@ -560,10 +570,11 @@ def write_summary(
         f"- Source rows: {total}",
         f"- After category/cap pre-filter: {after_prefilter}",
         f"- Relevant (LLM YES): {len(relevant)}",
-        "",
-        "## Relevant papers",
-        "",
     ]
+    if after_prefilter > 0:
+        pct = round(100 * call_failures / after_prefilter)
+        lines.append(f"- LLM call failures: {call_failures} / {after_prefilter} ({pct} %)")
+    lines.extend(["", "## Relevant papers", ""])
     for p in relevant:
         lines.append(f"- [{p.title}]({_paper_url(server, p.doi)}) — *{p.category}*")
     (output_dir / "summary.md").write_text("\n".join(lines) + "\n")
@@ -587,9 +598,17 @@ def _run_relevance_pass(
     model: str,
     relevance_prompt: str,
     output_dir: Path,
-) -> list[tuple[Paper, str]]:
+) -> tuple[list[tuple[Paper, str]], int]:
+    """Classify papers via the LLM; return (relevant, call_failures).
+
+    `call_failures` counts papers whose `is_relevant` call raised
+    `RuntimeError` after exhausting retries — needed so the pipeline can
+    distinguish a true-negative week from a rate-limited week (issue #6).
+    """
     relevant: list[tuple[Paper, str]] = []
+    call_failures = 0
     total = len(papers)
+    interval = Settings().llm_call_interval_secs
     for i, paper in enumerate(papers, 1):
         abstract = fetch_abstract(server, paper.doi)
         try:
@@ -602,12 +621,16 @@ def _run_relevance_pass(
             )
         except RuntimeError as exc:
             print(f"WARN: relevance call failed for {paper.doi}: {exc}", file=sys.stderr)
-            continue
-        marker = "YES" if keep else "no "
-        print(f"[{i}/{total}] {marker} {paper.doi} {paper.title[:80]}", file=sys.stderr)
+            call_failures += 1
+            keep = False
+        else:
+            marker = "YES" if keep else "no "
+            print(f"[{i}/{total}] {marker} {paper.doi} {paper.title[:80]}", file=sys.stderr)
         if keep:
             relevant.append((paper, abstract))
-    return relevant
+        if i < total and interval > 0:
+            time.sleep(interval)
+    return relevant, call_failures
 
 
 def _run_extraction_pass(
@@ -668,7 +691,7 @@ def main() -> int:
     relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(
         topic=args.topic
     )
-    relevant = _run_relevance_pass(
+    relevant, call_failures = _run_relevance_pass(
         papers,
         server=args.server,
         model=args.model,
@@ -692,6 +715,7 @@ def main() -> int:
         total=total,
         after_prefilter=after_prefilter,
         relevant=[p for p, _ in relevant],
+        call_failures=call_failures,
     )
 
     append_step_summary(output_dir, server=args.server, year=year, week=week)
@@ -702,6 +726,13 @@ def main() -> int:
     )
 
     print(f"Done. Relevant: {len(relevant)}/{after_prefilter}", file=sys.stderr)
+    if after_prefilter > 0 and call_failures / after_prefilter > 0.5:
+        print(
+            f"FAIL: {call_failures}/{after_prefilter} LLM calls failed (>50%); "
+            "treating run as broken rather than a true-negative week.",
+            file=sys.stderr,
+        )
+        return 2
     return 0
 
 
