@@ -73,6 +73,28 @@ job uploads `relevant.csv`, `extracts.jsonl`, and `summary.md` as a build
 artifact for downstream jobs.
 
 <details>
+<summary>Trigger the dispatch wrapper from CLI</summary>
+
+```bash
+# Bare minimum — current ISO week, biorxiv, max_papers=5 (dispatch default):
+gh workflow run eval-papers-dispatch.yaml
+
+# Overrides (any subset):
+gh workflow run eval-papers-dispatch.yaml \
+  -F server=biorxiv -F year=2026 -F week=20 -F max_papers=50
+
+# Watch + download artifact:
+run=$(gh run list --workflow=eval-papers-dispatch.yaml --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run watch "$run" --exit-status
+gh run download "$run"
+```
+
+Inputs: `topic`, `server` (biorxiv/medrxiv/arxiv), `year`, `week`,
+`categories`, `max_papers` (0 = no cap), `model`, `enrich`, `feed_repo`.
+
+</details>
+
+<details>
 <summary>Minimum-viable caller</summary>
 
 ```yaml
