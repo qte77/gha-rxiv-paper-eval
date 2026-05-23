@@ -128,19 +128,30 @@ jobs:
           TRIGGER: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          {
-            if [[ "$EVAL_RESULT" == "success" ]]; then
-              printf '## rxiv eval self-test — %s\n\n' "$ARTIFACT_NAME"
-              printf '- Trigger: `%s`\n' "$TRIGGER"
-              printf '- YES count: **%s**\n' "$RELEVANT_COUNT"
-              printf '- Run: %s\n\n' "$RUN_URL"
-              printf '<details><summary>summary.md</summary>\n\n'
-              cat output/summary.md
-              printf '\n</details>\n'
-            else
-              printf '## rxiv eval self-test — FAILED (`%s`)\n\n' "$EVAL_RESULT"
-              printf '- Trigger: `%s`\n' "$TRIGGER"
-              printf '- Run: %s\n\n' "$RUN_URL"
-              printf 'Eval job did not produce an artifact. Check the run logs.\n'
-            fi
-          } | gh issue comment 14 --repo "$REPO" --body-file -
+          body=$(mktemp)
+          if [[ "$EVAL_RESULT" == "success" ]]; then
+            summary=$(cat output/summary.md)
+            cat > "$body" <<EOF
+          ## rxiv eval self-test — $ARTIFACT_NAME
+
+          - Trigger: \`$TRIGGER\`
+          - YES count: **$RELEVANT_COUNT**
+          - Run: $RUN_URL
+
+          <details><summary>summary.md</summary>
+
+          $summary
+
+          </details>
+          EOF
+          else
+            cat > "$body" <<EOF
+          ## rxiv eval self-test — FAILED (\`$EVAL_RESULT\`)
+
+          - Trigger: \`$TRIGGER\`
+          - Run: $RUN_URL
+
+          Eval job did not produce an artifact. Check the run logs.
+          EOF
+          fi
+          gh issue comment 14 --repo "$REPO" --body-file "$body"
