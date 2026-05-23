@@ -39,7 +39,7 @@ for the authoritative list. Highlights:
 | Input | Default | Notes |
 | --- | --- | --- |
 | `topic` | required | Free-text. Substituted into the relevance system prompt. |
-| `server` | `biorxiv` | `biorxiv` or `medrxiv`. |
+| `server` | `biorxiv` | `biorxiv`, `medrxiv`, or `arxiv`. |
 | `year` / `week` | current ISO | UTC. Override for backfills. |
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
 | `max_papers` | 0 | 0 = no cap. |
@@ -52,6 +52,30 @@ Outputs:
 - `relevant_count` (string) — number of papers that passed the filter.
 - `artifact_name` (string) — the artifact uploaded by the job, for downstream
   jobs to download.
+- `summary.md` is also appended to `$GITHUB_STEP_SUMMARY` so per-week verdicts
+  render inline on the run page without downloading the artifact.
+
+Exit codes:
+
+- `0` — normal completion (including zero relevant papers).
+- `2` — more than 50% of LLM calls failed after retries exhausted. A rate-
+  limited run that produces no real verdicts fails loudly rather than
+  silently shipping a fabricated 0-hit result. See `summary.md`'s `LLM call
+  failures: X / Y (Z %)` line for the rate.
+
+Environment knobs (`RXIV_EVAL_*`):
+
+- `RETRY_MAX_ATTEMPTS` (default `5`), `RETRY_BASE_SECS` (default `4.0`) —
+  exponential backoff for retryable HTTP codes (429, 500, 502, 503, 504).
+- `LLM_CALL_INTERVAL_SECS` (default `1.5`) — steady-state gap between
+  successive relevance calls. Per-call retry alone cannot rescue a burst that
+  trips a per-minute rate ceiling; this throttle prevents the burst.
+- `ARXIV_REQUEST_DELAY_SECS` (default `3.0`) — polite delay before each arxiv
+  abstract fetch.
+- `MODELS_URL` — override the chat-completions endpoint (default GitHub
+  Models). Accepts any OpenAI-compatible URL.
+- `OFFLINE` / `STUB_MODE` — stub the LLM in tests (`yes` / `no` / `hash` /
+  `flaky`).
 
 Secrets:
 
@@ -95,7 +119,7 @@ without fixing), custom hardening (reinvents the wheel), regex parsing
 
 ### Outbound HTTP chokepoint
 
-All non-Models GETs go through `_urlopen_bytes(url, timeout=15)`, which
+All non-Models GETs go through `_urlopen_bytes(url, timeout=30)`, which
 refuses non-`https://` schemes. This keeps a single Bandit B310 suppression
 site instead of sprinkling `# nosec` across every fetcher.
 
@@ -124,7 +148,10 @@ schema-unification discussion.
 ## Open prototype questions
 
 - **GitHub Models quotas.** Inference is rate / token-limited per GitHub plan.
-  For large weeks a worker pool with retries (currently serial) would help.
+  0.2.0 adds steady-state throttling (`RXIV_EVAL_LLM_CALL_INTERVAL_SECS`) and
+  exponential backoff on 429/5xx, plus a >50%-failure-rate hard exit so
+  rate-limited runs are visible. A cheap pre-filter to shrink the candidate
+  set before LLM calls is still open (tracked in #7).
 - **Custom extraction schemas per consumer.** Today the schema is hardcoded in
   `DEFAULT_EXTRACTION_PROMPT`. If schemas diverge a lot, externalize the prompt
   into a per-consumer file the workflow path-inputs.

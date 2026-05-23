@@ -6,27 +6,46 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-23
+
 ### Added
+- Step summary mirroring: `summary.md` is appended to `$GITHUB_STEP_SUMMARY` so per-week verdicts render inline on the workflow run page (closes #37, PR #43).
+- LLM call-failure rate surfaced in `summary.md` as `LLM call failures: X / Y (Z %)`, and non-zero exit (code 2) when the rate strictly exceeds 50% — a rate-limited run no longer passes as a true-negative week (closes #6, PR #46).
+- Inter-call throttle: `Settings.llm_call_interval_secs` (env `RXIV_EVAL_LLM_CALL_INTERVAL_SECS`, default 1.5s) inserts a steady-state gap between LLM relevance calls (PR #46).
+- LLM relevance reasoning surfaced in `summary.md` for both YES and NO verdicts (PR #35).
+- Retry + polite inter-request delay for arxiv abstract fetches (PR #34).
+- Generic extraction-prompt schema with per-server hint substitution (PR #38).
+- Configurable model endpoint via `RXIV_EVAL_MODELS_URL`; defaults to GitHub Models, accepts any OpenAI-compatible chat-completions URL (PR #41).
+- CLI dispatch invocation block in `README.md` (PR #49).
+- `docs/CHANGELOG.md`, `docs/USERSTORY.md`, `docs/ROADMAP.md`, `docs/ARCHITECTURE.md` (PR #31).
 - `examples/consumer-eval.yaml`: drop-in workflow for downstream repos plus a sample triage job.
-- Makefile with `sync`/`setup`/`test`/`lint`/`complexity`/`validate`/`smoke`/`help` recipes (#27).
-- `Install uv` step + `uv sync --no-dev` in the reusable eval workflow (#23).
-- `DEFAULT_TOPIC` targeting the qte77 account themes; `--topic` becomes optional (#21).
+- Makefile with `sync`/`setup`/`test`/`lint`/`complexity`/`validate`/`smoke`/`help` recipes (PR #27).
+- `Install uv` step + `uv sync --no-dev` in the reusable eval workflow (PR #23).
+- `DEFAULT_TOPIC` targeting the qte77 account themes; `--topic` becomes optional (PR #21).
 - `--server arxiv` support: `ArxivCsvRow` pydantic adapter, Atom XML abstract
-  fetcher, manual-dispatch wrapper (#16).
+  fetcher, manual-dispatch wrapper (PR #16).
 
 ### Changed
-- CI and the reusable eval workflow drive quality gates + dep install via Make recipes (single source of truth for local + CI).
-- Bumped `astral-sh/setup-uv` from v6 (Node 20, deprecated) to v8.1.0 (Node 24) (#25).
-- GitHub Models calls use the auto-provided `GITHUB_TOKEN` + `permissions: models: read`; the explicit `MODELS_TOKEN` PAT requirement is gone (#24).
-- Reusable workflow auto-derives its checkout repo + ref from `github.workflow_ref`/`github.workflow_sha`; `feed_repo` defaults to `${caller-owner}/gha-rxiv-feed-action`; `python_version` is a workflow input (#22).
-- Ruff `select` widened to the full strict reference set: `E,F,I,N,W,UP,B,S,SIM,RUF,PT,ANN,TCH,PGH,C90,D` with pydocstyle Google convention (#17, #20).
+- Default `DEFAULT_RELEVANCE_PROMPT` loosened: drops "strict" / "if and only if" / "when uncertain, answer NO"; adds methodology clause and tips borderline toward YES when methodology is transferable (closes #5, PR #47). Consumers overriding via `RELEVANCE_PROMPT` env / workflow input are unaffected.
+- arxiv 2026 producer schema accepted (drop `Weekday(Monday==0)`, add `Categories`) (PR #32).
+- Workflow YAML shrunk: step-summary write, `relevant_count`, and `artifact_name` outputs now flow from Python via `output/.workflow_outputs` (PR #43).
+- CI and the reusable eval workflow drive quality gates + dep install via Make recipes (single source of truth for local + CI; PRs #30, #42).
+- README leads with local usage and introduces the Makefile recipes (PR #33).
+- Bumped `astral-sh/setup-uv` from v6 (Node 20, deprecated) to v8.1.0 (Node 24) (PR #25).
+- GitHub Models calls use the auto-provided `GITHUB_TOKEN` + `permissions: models: read`; the explicit `MODELS_TOKEN` PAT requirement is gone (PR #24).
+- Reusable workflow auto-derives its checkout repo + ref from `github.workflow_ref`/`github.workflow_sha`; `feed_repo` defaults to `${caller-owner}/gha-rxiv-feed-action`; `python_version` is a workflow input (PR #22).
+- Ruff `select` widened to the full strict reference set: `E,F,I,N,W,UP,B,S,SIM,RUF,PT,ANN,TCH,PGH,C90,D` with pydocstyle Google convention (PRs #17, #20).
 
 ### Fixed
-- `_fetch_arxiv_abstract` catches `TimeoutError` (not a `urllib.error.URLError` subclass); default urlopen timeout 15s → 30s for arxiv API slow paths (#26).
-- Runtime-dep install gap: workflow ran the script without `uv sync`, crashing on `import defusedxml` after PR #16 added the dep (#23).
+- arxiv URL resolver uses `https://arxiv.org/abs/{id}` instead of `doi.org` (PR #41).
+- `_fetch_arxiv_abstract` catches `TimeoutError` (not a `urllib.error.URLError` subclass); default urlopen timeout 15s → 30s for arxiv API slow paths (PR #26).
+- Runtime-dep install gap: workflow ran the script without `uv sync`, crashing on `import defusedxml` after PR #16 added the dep (PR #23).
 
 ### Security
 - `defusedxml.ElementTree` replaces stdlib XML parser for the arxiv Atom response (mitigates billion-laughs / quadratic-blowup; Bandit B314). Single `_urlopen_bytes` chokepoint refuses non-https URLs (Bandit B310). Tracked under the FIXME in `scripts/eval_papers.py`.
+
+### Notes
+- PR #44 dropped `fromJSON(...)` on dispatch inputs based on actionlint advice; it broke runtime workflow-call forwarding and was reverted by PR #48. Net effect on 0.2.0: zero — both omitted intentionally.
 
 ## Released history
 
