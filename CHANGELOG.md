@@ -8,9 +8,10 @@ entries are PR-scoped.
 
 ### Added
 - `eval-papers-dispatch.yaml` becomes the eval-pipeline self-test (#14): runs
-  weekly (Tuesday 09:00 UTC) and on PRs that touch `scripts/` or either
-  workflow file, then posts a tracking comment to #14 with the artifact
-  name, YES count, run URL, and `summary.md` body.
+  weekly (Tuesday 09:00 UTC) and posts a tracking comment to #14 with the
+  artifact name, YES count, run URL, and `summary.md` body. Manual
+  dispatches (ad-hoc smokes) run the eval but do not post — keeps #14
+  noise-free.
 
 ### Security
 - Consolidate all `urllib.request.urlopen` calls through `_urlopen_bytes`;

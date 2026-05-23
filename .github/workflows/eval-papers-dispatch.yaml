@@ -56,13 +56,11 @@ on:
         default: ""
   schedule:
     # Tuesdays 09:00 UTC — producer ships Monday, this gives the feed a
-    # buffer in case of producer-side retries.
+    # buffer in case of producer-side retries. The PR-trigger was dropped:
+    # standard CI (lint-types-tests on every PR) catches code regressions;
+    # the self-test exists to surface prompt-quality / verdict drift, which
+    # only changes on (rare) prompt edits, so weekly is enough.
     - cron: "0 9 * * 2"
-  pull_request:
-    paths:
-      - "scripts/**"
-      - ".github/workflows/eval-papers.yaml"
-      - ".github/workflows/eval-papers-dispatch.yaml"
 
 permissions:
   contents: read
@@ -100,11 +98,15 @@ jobs:
       feed_repo: ${{ inputs.feed_repo || '' }}
 
   comment:
-    # Post a tracking comment on #14 after each run (success or failure) so
-    # row-count / verdict drift is visible across runs. Skipped on cancellation
-    # (e.g. concurrency-replaced runs) to avoid stale noise.
+    # Post a tracking comment on #14 after each scheduled run so row-count /
+    # verdict drift is visible across runs. Manual dispatches (ad-hoc smokes
+    # with custom topics/models) intentionally do NOT post — users who want
+    # to attach a manual run to #14 can `gh issue comment 14` themselves.
+    # Skipped on cancellation (e.g. concurrency-replaced runs).
     needs: eval
-    if: ${{ always() && needs.eval.result != 'cancelled' }}
+    if: |
+      always() && needs.eval.result != 'cancelled'
+      && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
