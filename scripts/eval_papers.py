@@ -31,7 +31,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
-# FIXME: drop defusedxml + Atom parsing once the producer (gha-rxiv-feed-action)
+# NOTE: drop defusedxml + Atom parsing once the producer (gha-rxiv-feed-action)
 # emits a normalized arxiv CSV that already carries the abstract. See
 # docs/design.md "Servers and schema adapters".
 import defusedxml.ElementTree as ET  # noqa: N817  ET mirrors stdlib xml.etree convention
@@ -366,32 +366,29 @@ def _with_retry(call: Callable[[], T], settings: Settings) -> T:
 
 
 def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    url = Settings().models_url
-    if not url.startswith("https://"):
-        raise ValueError(f"refusing non-https models URL: {url!r}")
-    payload = {
-        "model": model,
-        "temperature": 0,
-        "max_tokens": max_tokens,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-    }
-    # S310: scheme is enforced above; URL is operator-supplied via
-    # RXIV_EVAL_MODELS_URL (defaults to GitHub Models).
-    req = urllib.request.Request(  # noqa: S310
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
+    payload = json.dumps(
+        {
+            "model": model,
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+    ).encode("utf-8")
+    body = json.loads(
+        _urlopen_bytes(
+            Settings().models_url,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-        body = json.load(resp)
     return body["choices"][0]["message"]["content"]
 
 
@@ -442,17 +439,26 @@ def is_relevant(
     return relevant
 
 
-def _urlopen_bytes(url: str, timeout: int = 30) -> bytes:
-    """Read the body of an HTTPS GET.
+def _urlopen_bytes(
+    url: str,
+    *,
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    method: str = "GET",
+    timeout: int = 30,
+) -> bytes:
+    """Read the body of an HTTPS request (GET or POST).
 
     Single chokepoint for outbound HTTP so Bandit B310 is suppressed exactly
-    once and callers cannot pass non-https URLs.
+    once and callers cannot pass non-https URLs. POST callers supply `data`,
+    `headers`, and `method="POST"`; GET callers leave those at defaults.
     """
     if not url.startswith("https://"):
         raise ValueError(f"refusing non-https URL: {url!r}")
+    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)  # noqa: S310
     # Bandit B310 / ruff S310: scheme is enforced above; both linters get the
     # same justification but read different suppression syntaxes.
-    with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310  # noqa: S310
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310  # noqa: S310
         return resp.read()
 
 

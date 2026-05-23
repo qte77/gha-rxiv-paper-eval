@@ -114,6 +114,24 @@ class GhModelsRestTests(unittest.TestCase):
         self.assertIn("429", str(ctx.exception))
 
 
+class UrlopenBytesTests(unittest.TestCase):
+    """Direct coverage of the urlopen chokepoint scheme guard. Transitively
+    covered via `test_models_url_refuses_non_https`, but pinning the
+    contract here keeps the guarantee explicit if callers move around.
+    """
+
+    def test_refuses_non_https_url(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            eval_papers._urlopen_bytes("http://insecure.example/foo")
+        self.assertIn("non-https", str(ctx.exception))
+
+    def test_refuses_file_scheme(self) -> None:
+        # The whole point of B310 is rejecting file:// / custom schemes.
+        with self.assertRaises(ValueError) as ctx:
+            eval_papers._urlopen_bytes("file:///etc/passwd")
+        self.assertIn("non-https", str(ctx.exception))
+
+
 class IsRelevantTests(unittest.TestCase):
     def setUp(self) -> None:
         self._env = patch.dict(os.environ, {"GH_TOKEN": "fake-token"})
