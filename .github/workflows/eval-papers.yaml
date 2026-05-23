@@ -56,6 +56,24 @@ on:
         description: "Python version to set up for the eval script."
         type: string
         default: "3.12"
+      eval_repo:
+        description: >-
+          owner/repo that hosts THIS reusable workflow's source (script +
+          Makefile). Cross-repo callers (including consumers of forks) MUST
+          override to match their `uses:` pin. Default targets the canonical
+          home; fork users set `<their-org>/gha-rxiv-paper-eval`.
+        type: string
+        default: qte77/gha-rxiv-paper-eval
+      eval_ref:
+        description: >-
+          ref (tag, branch, or SHA) of `eval_repo` to check out. MUST match
+          the `uses: @<ref>` pin in the caller workflow so the script
+          version aligns with the workflow version. `github.workflow_ref` /
+          `github.workflow_sha` cannot be auto-derived inside a reusable
+          workflow — they resolve to the CALLER's workflow, not this one
+          (the prior auto-derivation in v0.2.0 broke all cross-repo callers).
+        type: string
+        required: true
     outputs:
       relevant_count:
         description: "Number of papers that passed the relevance filter."
@@ -75,27 +93,16 @@ jobs:
       relevant_count: ${{ steps.run.outputs.relevant_count }}
       artifact_name: ${{ steps.run.outputs.artifact_name }}
     steps:
-      - name: Resolve eval-repo source from workflow_ref
-        id: eval_src
-        # github.workflow_ref looks like:
-        #   <owner>/<repo>/.github/workflows/<file>@<ref>
-        # We strip /.github/* to get owner/repo and use workflow_sha (the
-        # commit the reusable workflow file was loaded from) so the script
-        # version always matches the workflow version the caller pinned.
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: |
-          set -euo pipefail
-          repo="${WORKFLOW_REF%/.github/*}"
-          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
-          echo "sha=${WORKFLOW_SHA}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout eval repo
+        # `eval_repo` + `eval_ref` are explicit because reusable workflows
+        # cannot reliably introspect their own source repo at runtime —
+        # both `github.workflow_ref` and `github.workflow_sha` resolve to
+        # the CALLER's workflow. Caller MUST pass `eval_ref` matching the
+        # `uses: @<ref>` pin so the script version aligns.
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
-          repository: ${{ steps.eval_src.outputs.repo }}
-          ref: ${{ steps.eval_src.outputs.sha }}
+          repository: ${{ inputs.eval_repo }}
+          ref: ${{ inputs.eval_ref }}
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0

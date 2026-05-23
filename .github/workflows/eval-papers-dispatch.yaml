@@ -96,6 +96,13 @@ jobs:
       model: ${{ inputs.model || 'openai/gpt-4o-mini' }}
       enrich: ${{ fromJSON(inputs.enrich || 'true') }}
       feed_repo: ${{ inputs.feed_repo || '' }}
+      # In-repo caller: eval_repo defaults to qte77/gha-rxiv-paper-eval (the
+      # reusable workflow's `inputs.eval_repo` default) which is `github.repository`
+      # here. `eval_ref: ${{ github.sha }}` checks out the commit currently
+      # running the dispatch, so the script version always matches the
+      # workflow version triggering this run.
+      eval_repo: ${{ github.repository }}
+      eval_ref: ${{ github.sha }}
 
   comment:
     # Post a tracking comment on #14 after each scheduled run so row-count /

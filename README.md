@@ -104,10 +104,15 @@ permissions:
 
 jobs:
   eval:
-    uses: <owner>/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@main
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.2.1
     with:
       topic: "<your project's relevance criterion>"
       categories: "<comma-separated bioRxiv categories>"
+      # eval_ref MUST match the `uses: @<ref>` pin above. A reusable
+      # workflow cannot reliably introspect its own ref at runtime.
+      eval_ref: v0.2.1
+      # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users set
+      # `eval_repo: <their-org>/gha-rxiv-paper-eval`.
       # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
 ```
 

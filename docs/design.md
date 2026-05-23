@@ -46,6 +46,8 @@ for the authoritative list. Highlights:
 | `model` | `openai/gpt-4o-mini` | Any GitHub Models–supported id. |
 | `enrich` | `true` | Toggles the abstract fetch + extraction pass. |
 | `relevance_prompt` / `extraction_prompt` | "" | Override the defaults. |
+| `eval_repo` | `qte77/gha-rxiv-paper-eval` | Owner/repo hosting the reusable workflow's source. Fork users override. |
+| `eval_ref` | **required** | Tag/branch/SHA matching the caller's `uses: @<ref>` pin. Reusable workflows cannot auto-derive this (see v0.2.1 changelog). |
 
 Outputs:
 

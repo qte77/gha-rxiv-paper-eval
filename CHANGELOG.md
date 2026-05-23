@@ -6,6 +6,21 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-24
+
+### Fixed
+- **Critical**: cross-repo callers of `eval-papers.yaml` failed at the
+  checkout step in v0.2.0. The auto-derivation of the eval-repo source via
+  `github.workflow_ref` / `github.workflow_sha` resolved to the CALLER's
+  workflow + commit (per GHA semantics for reusable workflows), so the
+  caller's repo was cloned instead of the eval repo's. `actions/checkout`
+  then ran `make setup` against the wrong Makefile (no such target),
+  failing the run. Restored explicit `eval_repo` (default
+  `qte77/gha-rxiv-paper-eval`) and `eval_ref` (required) inputs — caller
+  MUST pass `eval_ref` matching its `uses: @<ref>` pin. Self-tests
+  in-repo are unaffected; only cross-repo (including fork) callers were
+  broken.
+
 ### Added
 - `eval-papers-dispatch.yaml` becomes the eval-pipeline self-test (#14): runs
   weekly (Tuesday 09:00 UTC) and posts a tracking comment to #14 with the
