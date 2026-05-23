@@ -1,8 +1,13 @@
-name: Evaluate rxiv papers (manual)
+name: Evaluate rxiv papers (dispatch + self-test)
 
-# Thin wrapper that exposes the reusable `eval-papers.yaml` workflow to the
-# Actions UI. The reusable workflow auto-derives the eval repo + ref from
-# `github.workflow_ref` / `github.workflow_sha`, so this dispatcher just
+# Dual-purpose wrapper around the reusable `eval-papers.yaml`:
+#   - workflow_dispatch: the manual UI dispatcher for ad-hoc smokes.
+#   - schedule + pull_request: the eval-pipeline self-test (#14). Each run
+#     drops a tracking comment on issue #14 so row-count / category-survivor /
+#     verdict drift is visible across runs.
+#
+# The reusable workflow auto-derives the eval repo + ref from
+# `github.workflow_ref` / `github.workflow_sha`, so this wrapper just
 # forwards inputs.
 
 on:
@@ -49,20 +54,39 @@ on:
           Producer repo. Empty = ${caller-owner}/gha-rxiv-feed-action.
         type: string
         default: ""
+  schedule:
+    # Tuesdays 09:00 UTC — producer ships Monday, this gives the feed a
+    # buffer in case of producer-side retries.
+    - cron: "0 9 * * 2"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - ".github/workflows/eval-papers.yaml"
+      - ".github/workflows/eval-papers-dispatch.yaml"
 
 permissions:
   contents: read
   models: read
+  issues: write
+
+concurrency:
+  group: rxiv-eval-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   eval:
     uses: ./.github/workflows/eval-papers.yaml
+    permissions:
+      contents: read
+      models: read
     with:
-      topic: ${{ inputs.topic }}
-      server: ${{ inputs.server }}
-      year: ${{ inputs.year }}
-      week: ${{ inputs.week }}
-      categories: ${{ inputs.categories }}
+      # `inputs.*` is null for schedule and pull_request events; the `||`
+      # fallbacks give those triggers the self-test baseline (#14).
+      topic: ${{ inputs.topic || 'defensive drug discovery, antimicrobial peptide (AMP) design, molecular dynamics, structure-based design and docking' }}
+      server: ${{ inputs.server || 'biorxiv' }}
+      year: ${{ inputs.year || '' }}
+      week: ${{ inputs.week || '' }}
+      categories: ${{ inputs.categories || '' }}
       # fromJSON wrappers force JSON coercion of typed workflow_dispatch
       # inputs before passing to workflow_call. Without them GHA fails the
       # reusable-workflow startup with no jobs running (PR #44 tried to drop
@@ -70,7 +94,53 @@ jobs:
       # not match GHA's runtime serialization). actionlint emits a spurious
       # "bool/number cannot be assigned to string" warning on these lines;
       # the runtime behavior contradicts the warning, so it's left as-is.
-      max_papers: ${{ fromJSON(inputs.max_papers) }}
-      model: ${{ inputs.model }}
-      enrich: ${{ fromJSON(inputs.enrich) }}
-      feed_repo: ${{ inputs.feed_repo }}
+      max_papers: ${{ fromJSON(inputs.max_papers || '50') }}
+      model: ${{ inputs.model || 'openai/gpt-4o-mini' }}
+      enrich: ${{ fromJSON(inputs.enrich || 'true') }}
+      feed_repo: ${{ inputs.feed_repo || '' }}
+
+  comment:
+    # Post a tracking comment on #14 after each run (success or failure) so
+    # row-count / verdict drift is visible across runs. Skipped on cancellation
+    # (e.g. concurrency-replaced runs) to avoid stale noise.
+    needs: eval
+    if: ${{ always() && needs.eval.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Download eval artifact
+        if: ${{ needs.eval.result == 'success' }}
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          name: ${{ needs.eval.outputs.artifact_name }}
+          path: output
+
+      - name: Post comment to #14
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RELEVANT_COUNT: ${{ needs.eval.outputs.relevant_count }}
+          ARTIFACT_NAME: ${{ needs.eval.outputs.artifact_name }}
+          EVAL_RESULT: ${{ needs.eval.result }}
+          TRIGGER: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          {
+            if [[ "$EVAL_RESULT" == "success" ]]; then
+              printf '## rxiv eval self-test — %s\n\n' "$ARTIFACT_NAME"
+              printf '- Trigger: `%s`\n' "$TRIGGER"
+              printf '- YES count: **%s**\n' "$RELEVANT_COUNT"
+              printf '- Run: %s\n\n' "$RUN_URL"
+              printf '<details><summary>summary.md</summary>\n\n'
+              cat output/summary.md
+              printf '\n</details>\n'
+            else
+              printf '## rxiv eval self-test — FAILED (`%s`)\n\n' "$EVAL_RESULT"
+              printf '- Trigger: `%s`\n' "$TRIGGER"
+              printf '- Run: %s\n\n' "$RUN_URL"
+              printf 'Eval job did not produce an artifact. Check the run logs.\n'
+            fi
+          } | gh issue comment 14 --repo "$REPO" --body-file -

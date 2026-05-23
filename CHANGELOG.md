@@ -6,6 +6,16 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- `eval-papers-dispatch.yaml` becomes the eval-pipeline self-test (#14): runs
+  weekly (Tuesday 09:00 UTC) and on PRs that touch `scripts/` or either
+  workflow file, then posts a tracking comment to #14 with the artifact
+  name, YES count, run URL, and `summary.md` body.
+
+### Security
+- Consolidate all `urllib.request.urlopen` calls through `_urlopen_bytes`;
+  drops two stray `# noqa: S310` sites. Closes Codacy/Bandit B310 (PR #51).
+
 ## [0.2.0] - 2026-05-23
 
 ### Added
