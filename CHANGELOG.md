@@ -6,6 +6,25 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-05-24
+
+### Fixed
+- **Regression from v0.2.0**: restore optional `models-token` secret on
+  `eval-papers.yaml` (`workflow_call.secrets`). v0.2.0 dropped the v0.1.x
+  block and hardcoded `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` on the
+  assumption that the auto-provided token has enough Models REST quota.
+  It does not — the shared org-wide quota is single-digit-per-day and
+  any non-trivial weekly batch returns HTTP 429 for every call (a 50-paper
+  run on a consumer repo failed 50/50 calls and tripped the >50% abort).
+  Workflow now uses `secrets.models-token || secrets.GITHUB_TOKEN`; pass
+  a fine-grained PAT for cron use. Pure additive change — callers passing
+  no secrets keep the v0.2.1 behavior.
+
+### Changed
+- Per-paper log lines now include `(i/N)` progress on both success and
+  failure paths in the relevance and extraction passes. Operators tailing
+  a long rate-limited run can see position without counting matching lines.
+
 ## [0.2.1] - 2026-05-24
 
 ### Fixed
