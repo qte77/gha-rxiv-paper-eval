@@ -629,7 +629,10 @@ def _run_relevance_pass(
                 output_dir=output_dir,
             )
         except RuntimeError as exc:
-            print(f"WARN: relevance call failed for {paper.doi}: {exc}", file=sys.stderr)
+            print(
+                f"WARN: relevance call failed ({i}/{total}) for {paper.doi}: {exc}",
+                file=sys.stderr,
+            )
             call_failures += 1
             keep = False
         else:
@@ -653,13 +656,19 @@ def _run_extraction_pass(
         server, DEFAULT_EXTRACTION_PROMPTS["biorxiv"]
     )
     extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or default_prompt
+    total = len(relevant)
     with (output_dir / "extracts.jsonl").open("w") as f:
-        for paper, abstract in relevant:
+        for i, (paper, abstract) in enumerate(relevant, 1):
             try:
                 fields = extract_fields(abstract, model=model, system_prompt=extraction_prompt)
             except RuntimeError as exc:
-                print(f"WARN: extract failed for {paper.doi}: {exc}", file=sys.stderr)
+                print(
+                    f"WARN: extract failed ({i}/{total}) for {paper.doi}: {exc}",
+                    file=sys.stderr,
+                )
                 fields = ExtractedFields()
+            else:
+                print(f"[{i}/{total}] extract OK {paper.doi}", file=sys.stderr)
             record = {
                 **paper.model_dump(),
                 "abstract": abstract,
