@@ -6,6 +6,13 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Docs
+- Added `examples/consumer-eval-vars.yaml` showing how to wire `topic` /
+  `categories` / `model` / `max_papers` from GitHub Actions repository or
+  organization variables instead of hardcoding. Covers the `fromJSON(...)`
+  workaround for `max_papers` (typed `number`, but `vars.*` is always
+  string) and the per-repo vs org-vars trade-off. README links to it.
+
 ## [0.2.2] - 2026-05-24
 
 ### Fixed

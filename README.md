@@ -132,6 +132,10 @@ jobs:
       models-token: ${{ secrets.MODELS_TOKEN }}
 ```
 
+To wire `topic` / `categories` (and similar) from GitHub Actions
+repository or organization variables instead of hardcoding, see
+[`examples/consumer-eval-vars.yaml`](examples/consumer-eval-vars.yaml).
+
 </details>
 
 <details>

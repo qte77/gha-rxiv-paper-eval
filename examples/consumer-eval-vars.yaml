@@ -1,0 +1,66 @@
+# Example: same as `consumer-eval.yaml`, but the eval `with:` block reads
+# `topic` / `categories` / `model` / `max_papers` from GitHub Actions
+# repository (or organization) variables instead of being hardcoded.
+#
+# When to prefer this layout:
+#   - Operators want to refine `topic` or trim `categories` without a PR.
+#   - Multiple consumer repos under one org share the same `model` /
+#     `max_papers` policy and want a single org-level knob to bump.
+#
+# Define under: Settings → Secrets and variables → Actions → Variables
+# (Variables tab, not Secrets — these are not sensitive).
+#
+# Required repo variables:
+#   RXIV_TOPIC      — free-text relevance criterion
+#   RXIV_CATEGORIES — comma-separated allowlist (empty = no pre-filter)
+#
+# Optional (fall back to literals if unset):
+#   RXIV_SERVER     — biorxiv / medrxiv / arxiv
+#   RXIV_MODEL      — any GitHub Models id; defaults to openai/gpt-4o-mini
+#   RXIV_MAX_PAPERS — int as string; defaults to 0 (no cap)
+#
+# The triage job is identical to `consumer-eval.yaml`; see that file.
+name: rxiv weekly eval (vars-driven)
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "ISO week (1-53). Empty = current."
+        type: string
+        default: ""
+      year:
+        description: "ISO year. Empty = current."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  models: read
+  issues: write
+
+jobs:
+  eval:
+    uses: <owner>/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.2.2
+    with:
+      # Required — define on the consumer repo.
+      topic: ${{ vars.RXIV_TOPIC }}
+      categories: ${{ vars.RXIV_CATEGORIES }}
+      # Optional with literal fallbacks.
+      server: ${{ vars.RXIV_SERVER || 'biorxiv' }}
+      model: ${{ vars.RXIV_MODEL || 'openai/gpt-4o-mini' }}
+      # `max_papers` is typed `number` upstream, but `vars.*` is always a
+      # string — wrap in fromJSON so the cast lands cleanly.
+      max_papers: ${{ fromJSON(vars.RXIV_MAX_PAPERS || '0') }}
+      enrich: true
+      year: ${{ inputs.year }}
+      week: ${{ inputs.week }}
+      # Pin matches the `uses:` ref above; mandatory since v0.2.1.
+      eval_ref: v0.2.2
+      # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users override.
+      # eval_repo: <fork-owner>/gha-rxiv-paper-eval
+    secrets:
+      # PAT remains a secret (sensitive). Repo or org secret; not a variable.
+      models-token: ${{ secrets.MODELS_TOKEN }}
