@@ -104,16 +104,20 @@ permissions:
 
 jobs:
   eval:
-    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.2.1
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.2.2
     with:
       topic: "<your project's relevance criterion>"
       categories: "<comma-separated bioRxiv categories>"
       # eval_ref MUST match the `uses: @<ref>` pin above. A reusable
       # workflow cannot reliably introspect its own ref at runtime.
-      eval_ref: v0.2.1
+      eval_ref: v0.2.2
       # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users set
       # `eval_repo: <their-org>/gha-rxiv-paper-eval`.
       # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
+    secrets:
+      # Optional but recommended for cron use. GITHUB_TOKEN's shared Models
+      # quota (single-digit per day org-wide) 429s any non-trivial batch.
+      models-token: ${{ secrets.MODELS_TOKEN }}
 ```
 
 </details>
@@ -149,9 +153,13 @@ jobs:
 
 ## Auth
 
-No secret needed. The `permissions: models: read` declaration on the caller
-workflow authorizes the auto-provided `GITHUB_TOKEN` to call GitHub Models;
-the same token also covers the public-repo `gh api` feed fetch.
+The `permissions: models: read` declaration on the caller authorizes the
+auto-provided `GITHUB_TOKEN` to call GitHub Models, and covers the public-repo
+`gh api` feed fetch. **But** the auto-`GITHUB_TOKEN`'s Models quota is
+single-digit-per-day org-wide — it 429s on any non-trivial weekly batch. For
+scheduled runs, pass a fine-grained PAT with `models: read` as the optional
+`models-token` secret (stored as `MODELS_TOKEN` on the caller repo). The
+workflow falls back to `GITHUB_TOKEN` when the secret is absent.
 
 For local runs the script reads `GH_TOKEN` from the environment — `gh auth
 token` provides one with both `gh api` and (depending on your account's

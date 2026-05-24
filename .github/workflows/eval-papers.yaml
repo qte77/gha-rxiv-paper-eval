@@ -74,6 +74,16 @@ on:
           (the prior auto-derivation in v0.2.0 broke all cross-repo callers).
         type: string
         required: true
+    secrets:
+      models-token:
+        description: >-
+          Optional PAT with `models: read` for the GitHub Models REST
+          endpoint. Falls back to GITHUB_TOKEN, whose Models quota is
+          single-digit-per-day org-wide and gets exhausted by any
+          non-trivial weekly batch. Pass a fine-grained PAT for weekly
+          cron use; GITHUB_TOKEN is fine for ad-hoc smoke tests of ~5
+          papers or fewer.
+        required: false
     outputs:
       relevant_count:
         description: "Number of papers that passed the relevance filter."
@@ -121,10 +131,13 @@ jobs:
         id: run
         env:
           # Used for both `gh api` (feed fetch) and the GitHub Models REST
-          # POST. The auto-provided GITHUB_TOKEN can call GitHub Models when
-          # the workflow declares `permissions: models: read` (above), so no
-          # separate PAT is needed.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # POST. The auto-provided GITHUB_TOKEN has a single-digit-per-day
+          # org-wide Models quota that gets exhausted by any non-trivial
+          # weekly batch (50-paper runs return HTTP 429 for every call).
+          # Pass `secrets.models-token` (fine-grained PAT with `models: read`)
+          # for cron use; GITHUB_TOKEN is fine for ad-hoc smoke tests of ~5
+          # papers or fewer.
+          GH_TOKEN: ${{ secrets.models-token || secrets.GITHUB_TOKEN }}
           INPUT_TOPIC: ${{ inputs.topic }}
           INPUT_SERVER: ${{ inputs.server }}
           INPUT_YEAR: ${{ inputs.year }}

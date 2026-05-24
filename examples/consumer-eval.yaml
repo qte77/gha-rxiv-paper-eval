@@ -18,8 +18,10 @@ on:
         type: string
         default: ""
 
-# `models: read` lets the auto-provided GITHUB_TOKEN call GitHub Models;
-# no separate PAT/secret is required.
+# `models: read` lets the auto-provided GITHUB_TOKEN call GitHub Models,
+# but its quota is single-digit-per-day org-wide and gets exhausted by any
+# non-trivial weekly batch. For cron use, pass a fine-grained PAT via
+# `secrets.MODELS_TOKEN` (see the `secrets:` block on the eval job below).
 permissions:
   contents: read
   models: read
@@ -41,6 +43,11 @@ jobs:
       enrich: true
       # feed_repo defaults to ${caller-owner}/gha-rxiv-feed-action; override if it lives elsewhere.
       # feed_repo: <feed-owner>/gha-rxiv-feed-action
+    secrets:
+      # Optional but strongly recommended for cron use. Create a fine-grained
+      # PAT with `models: read`, store as repo secret MODELS_TOKEN. Without
+      # this, GITHUB_TOKEN's shared org-wide quota will 429 after a few calls.
+      models-token: ${{ secrets.MODELS_TOKEN }}
 
   triage:
     needs: eval
