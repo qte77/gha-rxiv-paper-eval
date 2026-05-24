@@ -5,6 +5,26 @@ call to turn the weekly preprint CSV produced by a sibling
 [`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action)
 producer into a topic-filtered, abstract-enriched feed.
 
+## User stories
+
+- **As a research-group maintainer**, I want a weekly Issue per relevant
+  preprint with title + DOI + extracted methods so I can triage the week's
+  feed in five minutes without opening every PDF.
+- **As a multi-repo org owner**, I want a single tagged workflow my teams
+  pin to, so a prompt or retry-policy change ships to every consumer by
+  version bump (not by copying YAML).
+- **As an operator watching a long-running scheduled run**, I want to see
+  `(i/N)` progress on every per-paper log line so a 50-minute rate-limited
+  run is debuggable in real time (v0.2.2).
+- **As a downstream pipeline**, I want a stable JSON-schema extraction
+  (`summary` / `subjects` / `methods` / `key_findings` / `study_type`) per
+  YES paper so a secondary LLM step or dashboard can consume it without
+  parsing prose.
+- **As a cron consumer**, I want to pass a higher-quota PAT via
+  `secrets.models-token` because the auto-provided `GITHUB_TOKEN`'s
+  GitHub-Models quota is single-digit-per-day org-wide and 429s any
+  non-trivial weekly batch (v0.2.2 restores the v0.1.x secret).
+
 ## Pipeline
 
 ```text
@@ -81,10 +101,14 @@ Environment knobs (`RXIV_EVAL_*`):
 
 Secrets:
 
-- None. The auto-provided `GITHUB_TOKEN` is used for both the `gh api` feed
-  fetch and the GitHub Models REST POST. GitHub now scopes `models: read`
-  through the standard token, so consumers only need to declare
-  `permissions: models: read` on their calling workflow — no separate PAT.
+- `models-token` *(optional, since v0.2.2)* — fine-grained PAT with
+  `models: read`. The workflow uses
+  `secrets.models-token || secrets.GITHUB_TOKEN` for both the `gh api` feed
+  fetch and the GitHub Models REST POST. `GITHUB_TOKEN` works for ad-hoc
+  smoke tests of ~5 papers, but its Models quota is single-digit-per-day
+  org-wide — any non-trivial weekly batch will 429 every call without a
+  PAT. Consumers still declare `permissions: models: read` so the fallback
+  path works when no PAT is configured.
 
 ## Determinism
 
@@ -142,24 +166,41 @@ schema-unification discussion.
 - **Centralized prompt evolution.** Tweaks to the relevance/extraction prompt
   propagate to every consumer by tag.
 - **Versioning.** Consumers pin the workflow's `uses:` ref to a tag, so the
-  prompt contract is stable across runs until they explicitly bump. The
-  workflow auto-derives its checkout repo + sha from `github.workflow_ref`
-  / `github.workflow_sha`, so the script version always matches the
-  workflow version the caller pinned.
+  prompt contract is stable across runs until they explicitly bump.
+  Callers MUST pass `eval_ref` matching the `uses: @<ref>` pin so the
+  script version aligns with the workflow version (reusable workflows
+  cannot auto-derive this — `github.workflow_ref` /
+  `github.workflow_sha` resolve to the CALLER, see v0.2.1 changelog).
 
-## Open prototype questions
+## Roadmap
+
+### Shipped
 
 - **GitHub Models quotas.** Inference is rate / token-limited per GitHub plan.
   0.2.0 adds steady-state throttling (`RXIV_EVAL_LLM_CALL_INTERVAL_SECS`) and
   exponential backoff on 429/5xx, plus a >50%-failure-rate hard exit so
-  rate-limited runs are visible. A cheap pre-filter to shrink the candidate
-  set before LLM calls is still open (tracked in #7).
-- **Custom extraction schemas per consumer.** Today the schema is hardcoded in
-  `DEFAULT_EXTRACTION_PROMPT`. If schemas diverge a lot, externalize the prompt
-  into a per-consumer file the workflow path-inputs.
-- **Caching.** Same DOI evaluated across two consumers pays twice. A keyed
-  cache (DOI → relevance verdict + extract) would be cheap to add later if it
-  matters.
+  rate-limited runs are visible. 0.2.2 restores the optional `models-token`
+  PAT pass-through so cron consumers can step around `GITHUB_TOKEN`'s tiny
+  shared org quota.
+- **In-run observability.** 0.2.2 surfaces `(i/N)` progress on every
+  per-paper log line (success + failure, relevance + extraction passes), so
+  long rate-limited runs are debuggable from the streaming log.
+- **DOI cache.** A keyed per-DOI verdict cache lives under
+  `<output-dir>/.cache/` (`Verdict` JSON per sanitized DOI). Disable via
+  `RXIV_EVAL_NO_CACHE=1`. Same paper across two weeks pays once.
+
+### Open
+
+- **Cheap pre-filter to shrink the LLM candidate set** (tracked in #7).
+  Category allowlist + `max_papers` cap exist; a title-only heuristic
+  could drop more before the LLM call.
+- **Custom extraction schemas per consumer.** Today the schema is hardcoded
+  in `DEFAULT_EXTRACTION_PROMPT`. If schemas diverge a lot, externalize the
+  prompt into a per-consumer file the workflow path-inputs.
+- **Cross-consumer DOI cache.** The current cache is per-output-dir.
+  Sharing a verdict cache across consumer repos (same DOI evaluated by
+  multiple downstream orgs) would need a network-addressable store
+  (artifact-as-cache, gist, or repo-pinned JSON).
 
 ## Local smoke test
 

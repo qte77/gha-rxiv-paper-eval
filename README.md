@@ -6,8 +6,20 @@ producer, runs a topic-focused relevance filter through
 [GitHub Models](https://docs.github.com/en/github-models), and (optionally)
 enriches each hit with the abstract + a structured extraction.
 
-> **Status:** prototype. See `docs/design.md` for the contract and open
-> questions.
+> **Status:** prototype. See [`docs/design.md`](docs/design.md) for the full
+> contract, architecture, and roadmap.
+
+## Who this is for
+
+- **Research-group maintainers** who want a weekly digest of bioRxiv /
+  medRxiv / arXiv preprints filtered to their lab's topic, dropped into
+  GitHub Issues by a downstream triage job — without writing any LLM glue.
+- **Multi-repo orgs** running the same eval policy across several consumer
+  repos: pin one tag, propagate prompt + model + retry changes by version
+  bump rather than copy-paste.
+- **Methodology-focused readers** who want methods/findings/study-type
+  extracted into structured JSON for downstream pipelines (dashboards,
+  spreadsheets, secondary LLM steps).
 
 ## Run it locally
 

@@ -25,6 +25,13 @@ entries are PR-scoped.
   failure paths in the relevance and extraction passes. Operators tailing
   a long rate-limited run can see position without counting matching lines.
 
+### Docs
+- `README.md`: new "Who this is for" section.
+- `docs/design.md`: new "User stories" section; "Open prototype questions"
+  reorganized into a "Shipped / Open" Roadmap; corrected stale "Secrets:
+  None" block and the "auto-derives via `github.workflow_ref`" claim that
+  was reverted in v0.2.1.
+
 ## [0.2.1] - 2026-05-24
 
 ### Fixed
