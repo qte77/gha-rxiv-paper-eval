@@ -41,6 +41,12 @@ on:
         description: "Cap rows sent to the LLM. 0 = no cap."
         type: number
         default: 5
+      max_llm_calls:
+        description: >-
+          After category/cap filter, rank survivors by topic-keyword
+          overlap and send only top N to the LLM. 0 = no cap.
+        type: number
+        default: 0
       model:
         description: "GitHub Models model id."
         type: string
@@ -93,6 +99,7 @@ jobs:
       # "bool/number cannot be assigned to string" warning on these lines;
       # the runtime behavior contradicts the warning, so it's left as-is.
       max_papers: ${{ fromJSON(inputs.max_papers || '50') }}
+      max_llm_calls: ${{ fromJSON(inputs.max_llm_calls || '0') }}
       model: ${{ inputs.model || 'openai/gpt-4o-mini' }}
       enrich: ${{ fromJSON(inputs.enrich || 'true') }}
       feed_repo: ${{ inputs.feed_repo || '' }}
