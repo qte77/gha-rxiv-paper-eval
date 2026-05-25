@@ -63,6 +63,7 @@ for the authoritative list. Highlights:
 | `year` / `week` | current ISO | UTC. Override for backfills. |
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
 | `max_papers` | 0 | 0 = no cap. |
+| `max_llm_calls` | 0 | 0 = no cap. After category/cap filter, sends only the top-N papers by topic-keyword overlap (title + category). Use to stay under provider daily quotas (#6). |
 | `model` | `openai/gpt-4o-mini` | Any GitHub Models–supported id. |
 | `enrich` | `true` | Toggles the abstract fetch + extraction pass. |
 | `relevance_prompt` / `extraction_prompt` | "" | Override the defaults. |

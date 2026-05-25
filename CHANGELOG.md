@@ -6,6 +6,16 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- `max_llm_calls` workflow input + `--max-llm-calls` CLI flag. After the
+  category/cap pre-filter, survivors are scored by topic-keyword overlap
+  on `title + category` (stdlib-only tokenization; stopwords dropped;
+  tokens ≤ 3 chars dropped) and only the top N reach the LLM. Lets
+  consumers stay under provider daily quotas without sending alphabetically-
+  first-N papers (the old `max_papers` behavior). `summary.md` gains an
+  `After keyword pre-filter: X` audit line, surfaced only when the cap
+  actually fires. Closes #7.
+
 ### Docs
 - Added `examples/consumer-eval-vars.yaml` showing how to wire `topic` /
   `categories` / `model` / `max_papers` from GitHub Actions repository or

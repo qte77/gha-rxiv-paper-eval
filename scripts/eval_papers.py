@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -222,6 +223,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--model", default="openai/gpt-4o-mini")
     p.add_argument("--categories", default="")
     p.add_argument("--max-papers", type=int, default=0)
+    p.add_argument(
+        "--max-llm-calls",
+        type=int,
+        default=0,
+        help=(
+            "After category/cap filter, score survivors by topic-keyword "
+            "overlap on title+category and send only the top N to the LLM. "
+            "0 = no cap. Use to stay under provider daily quotas (#6)."
+        ),
+    )
     p.add_argument("--enrich", action="store_true")
     p.add_argument("--output-dir", default="output")
     return p.parse_args()
@@ -565,12 +576,19 @@ def write_summary(
     after_prefilter: int,
     relevant: list[Paper],
     call_failures: int = 0,
+    after_keyword_filter: int | None = None,
 ) -> None:
     """Render the run's `summary.md` artifact.
 
     `call_failures` is the count of LLM calls that raised after retries
     exhausted; surfacing it is critical because a 100%-rate-limited week
     otherwise looks identical to a true-negative week (issue #6).
+
+    `after_keyword_filter` is the survivor count after the optional
+    `--max-llm-calls` keyword pre-filter (#7); surfaced only when the cap
+    actually fired (i.e. differs from `after_prefilter`) so the audit
+    trail explains why fewer papers reached the LLM than the category
+    filter passed.
     """
     lines = [
         f"# rxiv eval — {server} {year}-W{week}",
@@ -578,8 +596,10 @@ def write_summary(
         f"- Topic: **{topic}**",
         f"- Source rows: {total}",
         f"- After category/cap pre-filter: {after_prefilter}",
-        f"- Relevant (LLM YES): {len(relevant)}",
     ]
+    if after_keyword_filter is not None and after_keyword_filter != after_prefilter:
+        lines.append(f"- After keyword pre-filter: {after_keyword_filter}")
+    lines.append(f"- Relevant (LLM YES): {len(relevant)}")
     if after_prefilter > 0:
         pct = round(100 * call_failures / after_prefilter)
         lines.append(f"- LLM call failures: {call_failures} / {after_prefilter} ({pct} %)")
@@ -598,6 +618,29 @@ def _prefilter(papers: list[Paper], categories: str, max_papers: int) -> list[Pa
         papers = papers[:max_papers]
         print(f"Capped to first {max_papers}", file=sys.stderr)
     return papers
+
+
+_STOPWORDS = frozenset({
+    "a", "an", "and", "or", "the", "of", "in", "on", "for", "to", "is",
+    "are", "was", "with", "by", "from", "that", "this", "as", "if",
+    "but", "not", "do", "does", "can", "could", "may", "using", "use",
+})
+
+
+def _topic_keywords(topic: str) -> set[str]:
+    """Tokenize ``topic`` into content words for the keyword pre-filter.
+
+    Drops stopwords and tokens shorter than 4 chars (e.g. "AMP", "LLM"
+    would be lost — that's the trade for stdlib-only zero-dep tokenization).
+    """
+    words = re.findall(r"[A-Za-z][A-Za-z0-9-]+", topic.lower())
+    return {w for w in words if len(w) > 3 and w not in _STOPWORDS}
+
+
+def _keyword_score(paper: Paper, vocab: set[str]) -> int:
+    """Count distinct ``vocab`` tokens appearing in title + category."""
+    text = f"{paper.title} {paper.category}".lower()
+    return sum(1 for w in vocab if w in text)
 
 
 def _run_relevance_pass(
@@ -706,6 +749,16 @@ def main() -> int:
     papers = _prefilter(papers, categories, args.max_papers)
     after_prefilter = len(papers)
 
+    if args.max_llm_calls and len(papers) > args.max_llm_calls:
+        vocab = _topic_keywords(args.topic)
+        papers = sorted(papers, key=lambda p: _keyword_score(p, vocab), reverse=True)
+        papers = papers[: args.max_llm_calls]
+        print(
+            f"After keyword pre-filter (top {args.max_llm_calls}): {len(papers)}",
+            file=sys.stderr,
+        )
+    after_keyword_filter = len(papers)
+
     relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(
         topic=args.topic
     )
@@ -732,6 +785,7 @@ def main() -> int:
         topic=args.topic,
         total=total,
         after_prefilter=after_prefilter,
+        after_keyword_filter=after_keyword_filter,
         relevant=[p for p, _ in relevant],
         call_failures=call_failures,
     )

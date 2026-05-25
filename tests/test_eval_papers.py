@@ -1158,6 +1158,169 @@ class RunRelevancePassTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# KeywordPreFilterTests (#7)
+# ---------------------------------------------------------------------------
+
+
+class TopicKeywordsTests(unittest.TestCase):
+    def test_drops_stopwords_and_short_tokens(self) -> None:
+        # drops stopwords ("the", "of", "in") and tokens ≤ 3 chars ("amp")
+        vocab = eval_papers._topic_keywords("the role of AMP in oral microbiome")
+        self.assertEqual(vocab, {"role", "oral", "microbiome"})
+
+    def test_lowercases_input(self) -> None:
+        self.assertEqual(
+            eval_papers._topic_keywords("Antimicrobial Peptides"),
+            {"antimicrobial", "peptides"},
+        )
+
+    def test_empty_topic_returns_empty(self) -> None:
+        self.assertEqual(eval_papers._topic_keywords(""), set())
+
+
+class KeywordScoreTests(unittest.TestCase):
+    def _paper(self, *, title: str, category: str = "biochemistry"):
+        return eval_papers.Paper(
+            date="2026-04-06", iso_week="15", doi="10.1101/x",
+            version="1", category=category, title=title, authors="A",
+        )
+
+    def test_counts_distinct_vocab_hits_in_title(self) -> None:
+        vocab = {"antimicrobial", "peptides", "oral"}
+        paper = self._paper(title="Antimicrobial peptides against E. coli")
+        self.assertEqual(eval_papers._keyword_score(paper, vocab), 2)
+
+    def test_counts_hits_in_category(self) -> None:
+        vocab = {"microbiome"}
+        paper = self._paper(title="Random title", category="microbiome")
+        self.assertEqual(eval_papers._keyword_score(paper, vocab), 1)
+
+    def test_zero_when_no_overlap(self) -> None:
+        vocab = {"foo", "bar"}
+        paper = self._paper(title="Random title", category="biochemistry")
+        self.assertEqual(eval_papers._keyword_score(paper, vocab), 0)
+
+
+class KeywordPreFilterEndToEndTests(unittest.TestCase):
+    """End-to-end: with --max-llm-calls < survivors, only the top-scoring
+    papers by topic-keyword overlap reach the LLM (#7).
+    """
+
+    def setUp(self) -> None:
+        self._env = patch.dict(
+            os.environ,
+            {
+                "GH_TOKEN": "fake-token",
+                "RXIV_EVAL_OFFLINE": "1",
+                "RXIV_EVAL_STUB_MODE": "yes",
+                "RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0",
+                "RXIV_EVAL_RETRY_BASE_SECS": "0.01",
+            },
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _run_main(self, csv_text: str, extra_argv: list[str]) -> pathlib.Path:
+        out = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+
+        def fake_fetch_feed(feed_repo, server, year, week, dest):
+            dest.write_text(csv_text)
+
+        saved_argv = sys.argv[:]
+        try:
+            sys.argv = [
+                "eval_papers.py",
+                "--feed-repo", "any/repo",
+                "--output-dir", str(out),
+                *extra_argv,
+            ]
+            with (
+                patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed),
+                patch(
+                    "urllib.request.urlopen",
+                    side_effect=AssertionError("urlopen must not fire in offline"),
+                ),
+            ):
+                rc = eval_papers.main()
+        finally:
+            sys.argv = saved_argv
+        self.assertEqual(rc, 0)
+        return out
+
+    def test_caps_papers_sent_to_llm_and_sorts_by_keyword_score(self) -> None:
+        # 3 overlapping rows (p1, p3, p5) + 2 unrelated (p2, p4). With cap=3,
+        # the 3 overlapping ones survive; the 2 unrelated never reach the LLM.
+        csv_text = (
+            "Date,ISOWeek,DOI,Version,Category,Title,Authors\n"
+            "2026-04-06,15,10.1101/p1,1,microbiology,"
+            "Antimicrobial peptides in oral biofilms,A\n"
+            "2026-04-06,15,10.1101/p2,1,microbiology,Random unrelated paper one,B\n"
+            "2026-04-06,15,10.1101/p3,1,microbiology,Oral microbiome and peptides,C\n"
+            "2026-04-06,15,10.1101/p4,1,microbiology,Random unrelated paper two,D\n"
+            "2026-04-06,15,10.1101/p5,1,microbiology,Peptides against oral pathogens,E\n"
+        )
+        out = self._run_main(
+            csv_text,
+            ["--topic", "antimicrobial peptides oral microbiome",
+             "--max-llm-calls", "3"],
+        )
+        lines = (out / "relevant.csv").read_text().splitlines()
+        self.assertEqual(len(lines), 4)  # 1 header + 3 data rows
+        dois = {line.split(",")[2] for line in lines[1:]}
+        self.assertEqual(dois, {"10.1101/p1", "10.1101/p3", "10.1101/p5"})
+        self.assertIn("After keyword pre-filter: 3", (out / "summary.md").read_text())
+
+    def test_zero_max_llm_calls_means_no_cap(self) -> None:
+        csv_text = (
+            "Date,ISOWeek,DOI,Version,Category,Title,Authors\n"
+        ) + "".join(
+            f"2026-04-06,15,10.1101/p{i},1,microbiology,Title {i},A\n"
+            for i in range(5)
+        )
+        out = self._run_main(csv_text, ["--topic", "any"])
+        self.assertNotIn("After keyword pre-filter", (out / "summary.md").read_text())
+
+    def test_cap_set_but_not_triggered_omits_summary_line(self) -> None:
+        # 2 rows, cap=5: cap never fires. Summary must NOT mention the filter.
+        csv_text = (
+            "Date,ISOWeek,DOI,Version,Category,Title,Authors\n"
+            "2026-04-06,15,10.1101/p1,1,microbiology,Title 1,A\n"
+            "2026-04-06,15,10.1101/p2,1,microbiology,Title 2,B\n"
+        )
+        out = self._run_main(csv_text, ["--topic", "any", "--max-llm-calls", "5"])
+        self.assertNotIn("After keyword pre-filter", (out / "summary.md").read_text())
+
+
+class WriteSummaryKeywordFilterLineTests(unittest.TestCase):
+    """`write_summary` emits the keyword-filter line only when the cap fired."""
+
+    def _call(self, *, after_prefilter: int, after_keyword_filter: int | None) -> str:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_summary(
+                out, server="biorxiv", year="2026", week="15",
+                topic="t", total=after_prefilter,
+                after_prefilter=after_prefilter,
+                after_keyword_filter=after_keyword_filter,
+                relevant=[], call_failures=0,
+            )
+            return (out / "summary.md").read_text()
+
+    def test_omits_line_when_param_is_none(self) -> None:
+        content = self._call(after_prefilter=10, after_keyword_filter=None)
+        self.assertNotIn("After keyword pre-filter", content)
+
+    def test_omits_line_when_cap_not_triggered(self) -> None:
+        content = self._call(after_prefilter=10, after_keyword_filter=10)
+        self.assertNotIn("After keyword pre-filter", content)
+
+    def test_emits_line_when_cap_triggered(self) -> None:
+        content = self._call(after_prefilter=10, after_keyword_filter=3)
+        self.assertIn("After keyword pre-filter: 3", content)
+
+
+# ---------------------------------------------------------------------------
 # WriteSummaryFailureRateTests
 # ---------------------------------------------------------------------------
 
