@@ -1,6 +1,6 @@
 [project]
 name = "gha-rxiv-paper-eval"
-version = "0.2.2"
+version = "0.2.4"
 description = "Reusable GitHub Actions workflow that filters preprint feeds via GitHub Models."
 authors = [
     {name = "qte77", email = "qte@77.gh"}

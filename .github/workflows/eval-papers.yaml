@@ -77,12 +77,11 @@ on:
     secrets:
       models-token:
         description: >-
-          Optional PAT with `models: read` for the GitHub Models REST
-          endpoint. Falls back to GITHUB_TOKEN, whose Models quota is
-          single-digit-per-day org-wide and gets exhausted by any
-          non-trivial weekly batch. Pass a fine-grained PAT for weekly
-          cron use; GITHUB_TOKEN is fine for ad-hoc smoke tests of ~5
-          papers or fewer.
+          Optional override for the auto-provided GITHUB_TOKEN. Use if
+          you observe GitHub Models quota issues (HTTP 429) in practice.
+          Falls back to GITHUB_TOKEN when absent; GITHUB_TOKEN with
+          `permissions: models: read` is sufficient for typical weekly
+          batches.
         required: false
     outputs:
       relevant_count:
@@ -131,12 +130,9 @@ jobs:
         id: run
         env:
           # Used for both `gh api` (feed fetch) and the GitHub Models REST
-          # POST. The auto-provided GITHUB_TOKEN has a single-digit-per-day
-          # org-wide Models quota that gets exhausted by any non-trivial
-          # weekly batch (50-paper runs return HTTP 429 for every call).
-          # Pass `secrets.models-token` (fine-grained PAT with `models: read`)
-          # for cron use; GITHUB_TOKEN is fine for ad-hoc smoke tests of ~5
-          # papers or fewer.
+          # POST. Optional: pass secrets.models-token (fine-grained PAT with
+          # `models: read`) if you hit quota issues. GITHUB_TOKEN with
+          # `permissions: models: read` is sufficient for typical weekly batches.
           GH_TOKEN: ${{ secrets.models-token || secrets.GITHUB_TOKEN }}
           INPUT_TOPIC: ${{ inputs.topic }}
           INPUT_SERVER: ${{ inputs.server }}

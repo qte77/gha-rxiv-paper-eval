@@ -6,7 +6,64 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-31
+
+### Added
+- `.github/workflows/triage-to-issues.yaml` — second reusable workflow
+  (`workflow_call`) that downloads an eval artifact and opens one GitHub
+  issue per row of `extracts.jsonl`. Replaces the inline bash triage
+  snippet that consumers were previously expected to copy from
+  `README.md` / `examples/consumer-eval.yaml`. Caller grants
+  `issues: write` on the triage job; `eval_ref` must match the
+  `uses: @<ref>` pin (same constraint as `eval-papers.yaml`).
+- `scripts/triage_to_issues.py` — stdlib-only Python driver invoked by
+  the new workflow; runnable standalone for local smoke tests against any
+  `extracts.jsonl`. Tolerates blank and malformed JSONL lines (warns,
+  skips). Auth delegated to `gh` CLI on PATH (uses `GH_TOKEN`).
+- `tests/test_triage_to_issues.py` — unit tests for the triage driver
+  (title/body composition, malformed-row handling, CLI plumbing).
+
+### Changed
+- `examples/consumer-eval.yaml` and `README.md` triage section: replaced
+  the inline `while … jq … gh issue create` bash loop with a call to the
+  new `triage-to-issues.yaml` reusable workflow. Consumers no longer
+  maintain their own triage shell.
+
 ### Docs
+- `scripts/eval_papers.py:160-161`: `ArxivCsvRow` docstring no longer
+  claims "no Authors column" — the 9-col producer schema includes it.
+
+## [0.2.3] - 2026-05-31
+
+### Changed
+- `eval-papers.yaml` `secrets.models-token` description and `GH_TOKEN` env
+  comment toned down: removed "single-digit-per-day org-wide" and "50-paper
+  runs return HTTP 429" claims. PAT is now described as an optional override
+  for when quota issues are actually observed. No behavior change.
+
+### Docs
+- `docs/design.md`: producer schema updated for both arxiv (9-col with
+  `Categories,Authors,Abstract`) and bio/med (8-col with `Authors,Abstract`).
+  Prose clarifies that `ArxivCsvRow` already tolerates the new columns and
+  that the `--categories` no-op guard is now removable (Categories are
+  present in the producer CSV) but not yet removed — tracked as follow-up.
+- `docs/design.md`: FIXME status updated to "ready" and scope broadened —
+  the Abstract column the FIXME was waiting for is now emitted by the
+  producer on all three servers; both per-paper abstract fetches (Atom XML
+  for arxiv, JSON for bio/med) remain active until the follow-up refactor
+  lands.
+- `docs/design.md`: MODELS_TOKEN / PAT framing toned down in "User stories"
+  and "Secrets" sections to match README Auth section (PAT is optional
+  override, not a requirement for non-trivial batches).
+- `docs/design.md`: local smoke test command updated to
+  `uv run python scripts/eval_papers.py` (matches README:66; avoids
+  missing-dep crashes for new contributors).
+- `eval-papers-dispatch.yaml`: fixed stale comment (lines 8-11) that claimed
+  the reusable workflow auto-derives repo + ref from
+  `github.workflow_ref`/`github.workflow_sha` — this was reverted in v0.2.1;
+  the wrapper now explicitly passes `eval_repo`/`eval_ref`.
+
+### Docs (carried from [Unreleased])
 - Added `examples/consumer-eval-vars.yaml` showing how to wire `topic` /
   `categories` / `model` / `max_papers` from GitHub Actions repository or
   organization variables instead of hardcoding. Covers the `fromJSON(...)`

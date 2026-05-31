@@ -157,12 +157,12 @@ class Paper(BaseModel):
 class ArxivCsvRow(BaseModel):
     """Raw row of the arxiv producer CSV (`data/arxiv/<year>/<week>.csv`).
 
-    Schema differs from the biorxiv/medrxiv `Paper`: arxiv id replaces DOI,
-    no Authors column, title is single-quoted. The producer schema evolved:
-    pre-2026 weeks had `Weekday(Monday==0)` and no Categories; 2026+ weeks
-    use `ISOWeek` and add a `Categories` column with semicolon-separated
-    arxiv tags. Only the always-required fields are validated here; the
-    rest are accepted via `extra="ignore"`.
+    Schema differs from the biorxiv/medrxiv `Paper`: arxiv id replaces DOI
+    and title is single-quoted. The producer schema evolved: pre-2026 weeks
+    had `Weekday(Monday==0)` and no Categories; 2026+ weeks use `ISOWeek`
+    and add a `Categories` column with semicolon-separated arxiv tags.
+    Only the always-required fields are validated here; the rest are
+    accepted via `extra="ignore"`.
     """
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")

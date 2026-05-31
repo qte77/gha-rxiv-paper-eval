@@ -1,0 +1,85 @@
+name: Triage rxiv eval to issues (reusable)
+
+# Second-stage reusable workflow: turns the `extracts.jsonl` produced by
+# `eval-papers.yaml` into one GitHub issue per relevant paper. Run as a
+# downstream job in the same consumer workflow:
+#
+#   jobs:
+#     eval:
+#       uses: <owner>/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@vX.Y.Z
+#       ...
+#     triage:
+#       needs: eval
+#       if: ${{ fromJSON(needs.eval.outputs.relevant_count) > 0 }}
+#       uses: <owner>/gha-rxiv-paper-eval/.github/workflows/triage-to-issues.yaml@vX.Y.Z
+#       with:
+#         artifact_name: ${{ needs.eval.outputs.artifact_name }}
+#         eval_ref: vX.Y.Z
+#       permissions:
+#         issues: write
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: "Eval artifact name (from eval-papers.yaml's outputs.artifact_name)."
+        type: string
+        required: true
+      label:
+        description: "Label applied to each created issue."
+        type: string
+        default: rxiv-feed
+      title_prefix:
+        description: 'Issue title prefix; result is "{prefix} {paper title}".'
+        type: string
+        default: "rxiv:"
+      eval_repo:
+        description: >-
+          owner/repo hosting THIS reusable workflow's source (the triage
+          script). Same rationale as eval-papers.yaml: reusable workflows
+          cannot reliably introspect their own source repo. Fork users
+          override.
+        type: string
+        default: qte77/gha-rxiv-paper-eval
+      eval_ref:
+        description: >-
+          ref (tag, branch, or SHA) of `eval_repo`. MUST match the caller's
+          `uses: @<ref>` pin so the script version aligns with the workflow
+          version (same constraint as eval-papers.yaml, see v0.2.1 changelog).
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout eval repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          repository: ${{ inputs.eval_repo }}
+          ref: ${{ inputs.eval_ref }}
+
+      - name: Download eval artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: eval-output
+
+      - name: Open issues
+        env:
+          # Auto-provided token is sufficient — `issues: write` is granted by
+          # the caller's job-level `permissions:` block.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          LABEL: ${{ inputs.label }}
+          TITLE_PREFIX: ${{ inputs.title_prefix }}
+        run: |
+          python3 scripts/triage_to_issues.py \
+            --extracts eval-output/extracts.jsonl \
+            --label "$LABEL" \
+            --title-prefix "$TITLE_PREFIX" \
+            --repo "$REPO"
