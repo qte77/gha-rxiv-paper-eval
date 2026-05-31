@@ -6,6 +6,56 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-31
+
+### Deprecated
+- `RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS` env var. Setting it in this release
+  emits a `WARN:` line on stderr and is otherwise a no-op (there's no
+  remote arxiv fetch left to delay). The check is removed in the next
+  release; a one-release deprecation cycle so operators see a hint
+  instead of silent ignore.
+
+### Removed
+- **Per-paper abstract fetch.** `scripts/eval_papers.py` no longer fetches
+  abstracts at runtime — neither the arxiv Atom XML endpoint
+  (`export.arxiv.org/api/query`) nor the bio/med JSON endpoint
+  (`api.biorxiv.org/details/...`). Abstracts are read directly from the
+  producer CSV's new `Abstract` column. Dropped functions:
+  `fetch_abstract`, `_fetch_arxiv_abstract`, `_fetch_rxiv_abstract`.
+  Removes the 3s × N polite-delay tax on arxiv runs.
+- `defusedxml` runtime dependency. Atom XML parsing is gone, so the
+  bandit-B314 mitigation has nothing to mitigate. Net dep count: -1.
+- `Settings.arxiv_request_delay_secs` and the `RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS`
+  env var. Nothing reads either anymore.
+- The `--categories` no-op guard for `--server=arxiv` in `main()`. The
+  producer's 9-col arxiv schema now ships `Categories`, so the prefilter
+  works for all three servers — no need to warn-and-reset.
+- `_run_relevance_pass` lost its `server` parameter (only used to dispatch
+  fetch_abstract, which is gone).
+
+### Added
+- `MIN_FEED_SCHEMA_VERSION = "0.2.2"` constant + `_assert_min_feed_schema`
+  header check in `load_papers`. Producer CSVs that lack the `Abstract`
+  column now raise `SystemExit` with a clear message pointing the
+  operator at the minimum `gha-rxiv-feed-action` release — instead of
+  silently shipping empty-abstract verdicts.
+- `Paper.abstract` and `ArxivCsvRow.abstract` / `ArxivCsvRow.authors`
+  fields (all default to `""` at the model layer; the load-time header
+  check enforces presence on real producer CSVs).
+
+### Changed
+- `write_papers` canonical column order now includes `Abstract` as the
+  trailing column on the bio/med relevant.csv output.
+- `extracts.jsonl` records drop the redundant top-level `"abstract"` key
+  (paper.model_dump() now contains it via `Paper.abstract`); existing
+  consumers reading `record["abstract"]` see no schema change.
+
+### Docs
+- `docs/design.md`: pipeline diagram drops the `abstract fetch` stage;
+  step 4 reframed as "abstract (CSV-sourced)"; Roadmap "Shipped" gains
+  the abstract-in-CSV refactor; the dedicated `defusedxml` rationale
+  section is gone; schema table notes both servers ship `Abstract` inline.
+
 ## [0.2.4] - 2026-05-31
 
 ### Added

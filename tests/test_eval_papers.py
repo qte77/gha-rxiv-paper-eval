@@ -384,9 +384,9 @@ class OfflineStubTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 _FIXTURE_FEED = """\
-Date,ISOWeek,DOI,Version,Category,Title,Authors
-2026-04-06,15,10.1101/2024.09.07.000001,1,microbiology,Paper one about bacterial enzymes,Smith J.
-2026-04-06,15,10.1101/2024.09.07.000002,1,microbiology,Paper two about membrane transporters,Jones A.
+Date,ISOWeek,DOI,Version,Category,Title,Authors,Abstract
+2026-04-06,15,10.1101/2024.09.07.000001,1,microbiology,Paper one about bacterial enzymes,Smith J.,Stub abstract one.
+2026-04-06,15,10.1101/2024.09.07.000002,1,microbiology,Paper two about membrane transporters,Jones A.,Stub abstract two.
 """  # noqa: E501
 
 
@@ -422,9 +422,6 @@ class ExtractFieldsErrorIsCaughtTests(unittest.TestCase):
                 # feed.csv already written above; nothing to do
                 pass
 
-            def fake_fetch_abstract(server, doi):
-                return "some abstract text"
-
             saved_argv = sys.argv[:]
             try:
                 sys.argv = [
@@ -439,13 +436,10 @@ class ExtractFieldsErrorIsCaughtTests(unittest.TestCase):
                 fetch_feed_patch = patch.object(
                     eval_papers, "fetch_feed", side_effect=fake_fetch_feed
                 )
-                fetch_abstract_patch = patch.object(
-                    eval_papers, "fetch_abstract", side_effect=fake_fetch_abstract
-                )
                 extract_fields_patch = patch.object(
                     eval_papers, "extract_fields", side_effect=fake_extract_fields
                 )
-                with fetch_feed_patch, fetch_abstract_patch, extract_fields_patch:
+                with fetch_feed_patch, extract_fields_patch:
                     import io as _io
                     stderr_capture = _io.StringIO()
                     with patch("sys.stderr", stderr_capture):
@@ -647,86 +641,6 @@ class OfflineEndToEndTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# FetchAbstractArxivTests
-# ---------------------------------------------------------------------------
-
-
-class FetchAbstractArxivTests(unittest.TestCase):
-    _ATOM_PAYLOAD = (
-        b'<?xml version="1.0" encoding="UTF-8"?>'
-        b'<feed xmlns="http://www.w3.org/2005/Atom">'
-        b'<entry>'
-        b'<id>http://arxiv.org/abs/2406.09418v1</id>'
-        b'<title>Some title</title>'
-        b'<summary>This is the abstract text.</summary>'
-        b'</entry>'
-        b'</feed>'
-    )
-
-    def setUp(self) -> None:
-        self._env = patch.dict(os.environ, {}, clear=False)
-        self._env.start()
-        os.environ.pop("RXIV_EVAL_OFFLINE", None)
-        self.addCleanup(self._env.stop)
-
-    def test_returns_summary_text_from_atom(self) -> None:
-        resp = io.BytesIO(self._ATOM_PAYLOAD)
-        with patch("urllib.request.urlopen", return_value=resp) as mock_open:
-            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
-        self.assertEqual(result, "This is the abstract text.")
-        called_with = mock_open.call_args.args[0]
-        url_str = called_with.full_url if hasattr(called_with, "full_url") else str(called_with)
-        self.assertIn("export.arxiv.org", url_str)
-        self.assertIn("2406.09418", url_str)
-
-    def test_returns_empty_on_offline(self) -> None:
-        with patch.dict(os.environ, {"RXIV_EVAL_OFFLINE": "1"}), patch(
-            "urllib.request.urlopen",
-            side_effect=AssertionError("urlopen must not fire in offline mode"),
-        ):
-            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
-        self.assertEqual(result, "")
-
-    def test_parse_error_returns_empty_string(self) -> None:
-        resp = io.BytesIO(b"not xml at all")
-        with patch("urllib.request.urlopen", return_value=resp):
-            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
-        self.assertEqual(result, "")
-
-    def test_url_error_returns_empty_string(self) -> None:
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.URLError("transient"),
-        ):
-            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
-        self.assertEqual(result, "")
-
-    def test_retries_on_http_429_then_succeeds(self) -> None:
-        # arxiv 429 should retry per Settings, not give up immediately.
-        success = io.BytesIO(self._ATOM_PAYLOAD)
-        side_effects = [_http_error(429), _http_error(429), success]
-        with (
-            patch.dict(os.environ, {"RXIV_EVAL_RETRY_BASE_SECS": "0.01",
-                                    "RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS": "0"}),
-            patch("urllib.request.urlopen", side_effect=side_effects),
-            patch("time.sleep"),
-        ):
-            result = eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
-        self.assertEqual(result, "This is the abstract text.")
-
-    def test_sleeps_polite_delay_before_arxiv_fetch(self) -> None:
-        resp = io.BytesIO(self._ATOM_PAYLOAD)
-        sleep_calls: list[float] = []
-        with (
-            patch.dict(os.environ, {"RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS": "2.5"}),
-            patch("urllib.request.urlopen", return_value=resp),
-            patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
-        ):
-            eval_papers.fetch_abstract(server="arxiv", doi="2406.09418")
-        self.assertIn(2.5, sleep_calls)
-
-
-# ---------------------------------------------------------------------------
 # LoadPapersServerDispatchTests
 # ---------------------------------------------------------------------------
 
@@ -751,84 +665,28 @@ class LoadPapersServerDispatchTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# CategoriesWarningWithArxivTests
+# MinFeedSchemaTests
 # ---------------------------------------------------------------------------
 
 
-class CategoriesWarningWithArxivTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self._env = patch.dict(
-            os.environ,
-            {
-                "GH_TOKEN": "fake-token",
-                "RXIV_EVAL_OFFLINE": "1",
-                "RXIV_EVAL_STUB_MODE": "hash",
-                "RXIV_EVAL_RETRY_BASE_SECS": "0.01",
-                "RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0",
-            },
-        )
-        self._env.start()
-        self.addCleanup(self._env.stop)
+class MinFeedSchemaTests(unittest.TestCase):
+    """`load_papers` must reject producer CSVs that predate the
+    abstract-in-CSV schema (gha-rxiv-feed-action < v0.2.2) with a clear
+    error rather than silently returning empty abstracts.
+    """
 
-    def test_main_warns_and_ignores_categories_for_arxiv(self) -> None:
+    def test_load_papers_rejects_csv_without_abstract_column(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            out = pathlib.Path(tmpdir)
-
-            def fake_fetch_feed(feed_repo, server, year, week, dest):
-                shutil.copy(_FIXTURE_ARXIV_PATH, dest)
-
-            saved_argv = sys.argv[:]
-            try:
-                sys.argv = [
-                    "eval_papers.py",
-                    "--feed-repo", "any/repo",
-                    "--server", "arxiv",
-                    "--topic", "test",
-                    "--categories", "cs.LG",  # arxiv CSV has no Category column
-                    "--max-papers", "5",
-                    "--output-dir", str(out),
-                ]
-                with patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed):
-                    stderr_capture = io.StringIO()
-                    with patch("sys.stderr", stderr_capture):
-                        rc = eval_papers.main()
-            finally:
-                sys.argv = saved_argv
-
-            self.assertEqual(rc, 0)
-            stderr_output = stderr_capture.getvalue()
-            self.assertIn("--categories", stderr_output)
-            self.assertIn("arxiv", stderr_output)
-            # The 3 arxiv fixture rows must reach the relevance pass — none
-            # should be dropped by a phantom category prefilter.
-            self.assertIn("Loaded 3 papers", stderr_output)
-
-    def test_main_does_not_warn_when_no_categories(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out = pathlib.Path(tmpdir)
-
-            def fake_fetch_feed(feed_repo, server, year, week, dest):
-                shutil.copy(_FIXTURE_ARXIV_PATH, dest)
-
-            saved_argv = sys.argv[:]
-            try:
-                sys.argv = [
-                    "eval_papers.py",
-                    "--feed-repo", "any/repo",
-                    "--server", "arxiv",
-                    "--topic", "test",
-                    "--max-papers", "5",
-                    "--output-dir", str(out),
-                ]
-                with patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed):
-                    stderr_capture = io.StringIO()
-                    with patch("sys.stderr", stderr_capture):
-                        rc = eval_papers.main()
-            finally:
-                sys.argv = saved_argv
-
-            self.assertEqual(rc, 0)
-            self.assertNotIn("--categories", stderr_capture.getvalue())
+            old = pathlib.Path(tmpdir) / "feed.csv"
+            old.write_text(
+                "Date,ISOWeek,DOI,Version,Category,Title,Authors\n"
+                "2026-04-06,15,10.1101/x,1,microbiology,Old paper,Doe J.\n"
+            )
+            with self.assertRaises(SystemExit) as ctx:
+                eval_papers.load_papers(old, server="biorxiv")
+            msg = str(ctx.exception)
+            self.assertIn("Abstract", msg)
+            self.assertIn(eval_papers.MIN_FEED_SCHEMA_VERSION, msg)
 
 
 # ---------------------------------------------------------------------------
@@ -1054,12 +912,10 @@ class RunRelevancePassTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             out = pathlib.Path(tmpdir)
             with (
-                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
                 patch.object(eval_papers, "is_relevant", side_effect=fake_is_relevant),
             ):
                 relevant, call_failures = eval_papers._run_relevance_pass(
                     papers,
-                    server="biorxiv",
                     model="openai/gpt-4o-mini",
                     relevance_prompt="sys",
                     output_dir=out,
@@ -1073,12 +929,10 @@ class RunRelevancePassTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             out = pathlib.Path(tmpdir)
             with (
-                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
                 patch.object(eval_papers, "is_relevant", return_value=True),
             ):
                 relevant, call_failures = eval_papers._run_relevance_pass(
                     papers,
-                    server="biorxiv",
                     model="openai/gpt-4o-mini",
                     relevance_prompt="sys",
                     output_dir=out,
@@ -1096,13 +950,11 @@ class RunRelevancePassTests(unittest.TestCase):
             out = pathlib.Path(tmpdir)
             with (
                 patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0.5"}),
-                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
                 patch.object(eval_papers, "is_relevant", return_value=True),
                 patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
             ):
                 eval_papers._run_relevance_pass(
                     papers,
-                    server="biorxiv",
                     model="openai/gpt-4o-mini",
                     relevance_prompt="sys",
                     output_dir=out,
@@ -1117,13 +969,11 @@ class RunRelevancePassTests(unittest.TestCase):
             out = pathlib.Path(tmpdir)
             with (
                 patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "9.9"}),
-                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
                 patch.object(eval_papers, "is_relevant", return_value=True),
                 patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
             ):
                 eval_papers._run_relevance_pass(
                     papers,
-                    server="biorxiv",
                     model="openai/gpt-4o-mini",
                     relevance_prompt="sys",
                     output_dir=out,
@@ -1143,13 +993,11 @@ class RunRelevancePassTests(unittest.TestCase):
             out = pathlib.Path(tmpdir)
             with (
                 patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0.25"}),
-                patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
                 patch.object(eval_papers, "is_relevant", side_effect=fake_is_relevant),
                 patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
             ):
                 eval_papers._run_relevance_pass(
                     papers,
-                    server="biorxiv",
                     model="openai/gpt-4o-mini",
                     relevance_prompt="sys",
                     output_dir=out,
@@ -1226,10 +1074,10 @@ class WriteSummaryFailureRateTests(unittest.TestCase):
 
 def _feed_csv(n: int) -> str:
     """Build a `n`-row biorxiv-format CSV fixture inline."""
-    header = "Date,ISOWeek,DOI,Version,Category,Title,Authors\n"
+    header = "Date,ISOWeek,DOI,Version,Category,Title,Authors,Abstract\n"
     rows = "".join(
         f"2026-04-06,15,10.1101/2024.09.07.{i:06d},1,microbiology,"
-        f"Paper {i},Author {i}.\n"
+        f"Paper {i},Author {i}.,Stub abstract {i}.\n"
         for i in range(n)
     )
     return header + rows
@@ -1288,7 +1136,6 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
                 ]
                 with (
                     patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed),
-                    patch.object(eval_papers, "fetch_abstract", return_value="abstract"),
                     patch.object(eval_papers, "is_relevant", side_effect=fake_is_relevant),
                 ):
                     return eval_papers.main()

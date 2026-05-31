@@ -35,7 +35,7 @@ on:
         type: string
         default: openai/gpt-4o-mini
       enrich:
-        description: "If true, fetch abstracts from the rxiv API and run the structured-extraction prompt."
+        description: "If true, run the structured-extraction prompt on the producer CSV's `Abstract` column for each YES verdict."
         type: boolean
         default: true
       relevance_prompt:
