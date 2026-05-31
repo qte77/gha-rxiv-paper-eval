@@ -6,9 +6,10 @@ name: Evaluate rxiv papers (dispatch + self-test)
 #     drops a tracking comment on issue #14 so row-count / category-survivor /
 #     verdict drift is visible across runs.
 #
-# The reusable workflow auto-derives the eval repo + ref from
-# `github.workflow_ref` / `github.workflow_sha`, so this wrapper just
-# forwards inputs.
+# The wrapper explicitly passes eval_repo + eval_ref (lines 104-105).
+# Auto-derivation via `github.workflow_ref` / `github.workflow_sha` was
+# reverted in v0.2.1 — those variables resolve to the CALLER's workflow,
+# not this one.
 
 on:
   workflow_dispatch:
