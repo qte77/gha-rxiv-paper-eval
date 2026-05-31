@@ -24,6 +24,7 @@ _CSV_ROW: dict[str, str] = {
     "Category": "microbiology",
     "Title": "Some bacterial enzyme paper",
     "Authors": "Smith, J.; Jones, A.",
+    "Abstract": "We characterize a bacterial enzyme involved in cell wall remodeling.",
 }
 
 
@@ -87,10 +88,14 @@ def test_paper_from_arxiv_row_derives_iso_week_from_published() -> None:
 
 
 def test_paper_from_arxiv_row_defaults_missing_columns() -> None:
-    # arxiv producer CSV has no Category / Authors columns
+    # Pre-9-col arxiv fixtures lack Categories/Authors/Abstract — the
+    # ArxivCsvRow defaults make them parse cleanly at the model layer.
+    # (Header-level rejection of stale producer CSVs happens in
+    # `_assert_min_feed_schema`, not in the row model itself.)
     paper = _paper_from_arxiv_row(_ARXIV_ROW)
     assert paper.category == ""
     assert paper.authors == ""
+    assert paper.abstract == ""
 
 
 def test_arxiv_csv_row_missing_field_raises() -> None:
@@ -101,7 +106,7 @@ def test_arxiv_csv_row_missing_field_raises() -> None:
 
 
 _ARXIV_ROW_2026: dict[str, str] = {
-    # 2026 schema: dropped Weekday(Monday==0), added Categories.
+    # 9-col schema: ISOWeek, plus Categories/Authors/Abstract.
     "Published": "2026-05-19T17:59:54Z",
     "ISOWeek": "21",
     "Updated": "2026-05-19T17:59:54Z",
@@ -109,6 +114,8 @@ _ARXIV_ROW_2026: dict[str, str] = {
     "Version": "1",
     "Title": "'PiG-Avatar: Hierarchical Neural-Field-Guided Gaussian Avatars'",
     "Categories": "cs.GR;cs.CV",
+    "Authors": "Doe, J.; Roe, R.",
+    "Abstract": "We present PiG-Avatar, a hierarchical neural-field model for animatable avatars.",
 }
 
 
@@ -122,6 +129,12 @@ def test_paper_from_arxiv_2026_uses_first_category() -> None:
     paper = _paper_from_arxiv_row(_ARXIV_ROW_2026)
     # Categories is "cs.GR;cs.CV" — primary should be cs.GR
     assert paper.category == "cs.GR"
+
+
+def test_paper_from_arxiv_2026_threads_authors_and_abstract() -> None:
+    paper = _paper_from_arxiv_row(_ARXIV_ROW_2026)
+    assert paper.authors == "Doe, J.; Roe, R."
+    assert paper.abstract.startswith("We present PiG-Avatar")
 
 
 def test_paper_from_arxiv_2024_still_works_without_categories() -> None:

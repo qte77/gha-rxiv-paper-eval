@@ -1,4 +1,4 @@
-Published,Weekday(Monday==0),Updated,ID,Version,Title
-2024-06-13T17:59:59Z,24,2024-06-13T17:59:59Z,2406.09418,1,'VideoGPT+: Integrating Image and Video Encoders for Enhanced Video Understanding'
-2024-06-13T17:59:58Z,24,2024-06-13T17:59:58Z,2406.09415,1,'An Image is Worth More Than 16x16 Patches: Exploring Transformers on Individual Pixels'
-2024-06-13T17:59:56Z,24,2024-06-13T17:59:56Z,2406.09413,1,'Interpreting the Weight Space of Customized Diffusion Models'
+Published,ISOWeek,Updated,ID,Version,Title,Categories,Authors,Abstract
+2024-06-13T17:59:59Z,24,2024-06-13T17:59:59Z,2406.09418,1,'VideoGPT+: Integrating Image and Video Encoders for Enhanced Video Understanding',cs.CV;cs.AI,"Doe, J.; Smith, A.","We present VideoGPT+, a unified video understanding model that combines image and video encoders."
+2024-06-13T17:59:58Z,24,2024-06-13T17:59:58Z,2406.09415,1,'An Image is Worth More Than 16x16 Patches: Exploring Transformers on Individual Pixels',cs.CV,"Roe, R.","Pixel-level transformers exceed patch-level baselines on dense prediction benchmarks."
+2024-06-13T17:59:56Z,24,2024-06-13T17:59:56Z,2406.09413,1,'Interpreting the Weight Space of Customized Diffusion Models',cs.LG;cs.CV,"Poe, P.","We probe the weight space of personalized diffusion models and identify interpretable directions."
