@@ -30,37 +30,38 @@ GitHub issue per relevant paper:
   (`summary` / `subjects` / `methods` / `key_findings` / `study_type`) per
   YES paper so a secondary LLM step or dashboard can consume it without
   parsing prose.
-- **As a cron consumer**, I want to pass a higher-quota PAT via
-  `secrets.models-token` because the auto-provided `GITHUB_TOKEN`'s
-  GitHub-Models quota is single-digit-per-day org-wide and 429s any
-  non-trivial weekly batch (v0.2.2 restores the v0.1.x secret).
+- **As a cron consumer**, I want the option to pass a PAT via
+  `secrets.models-token` if I hit GitHub-Models quota limits, while the
+  auto-provided `GITHUB_TOKEN` covers typical weekly batches without extra
+  configuration (v0.2.2 restores the v0.1.x optional secret).
 
 ## Pipeline
 
 ```text
-producer CSV  ─►  fetch  ─►  category pre-filter  ─►  abstract fetch  ─►  LLM YES/NO  ─►  LLM extract  ─►  artifact
-              gh api         (cheap, optional)        biorxiv API         Models REST   Models REST     upload-artifact
+producer CSV ─► fetch ─► category pre-filter ─► LLM YES/NO ─► LLM extract ─► artifact ─► triage (optional)
+             gh api      (cheap, optional)      Models REST  Models REST    upload      gh issue create
 ```
 
-1. **Fetch** the week's CSV from `data/<server>/<year>/<week>.csv` in the feed repo.
+1. **Fetch** the week's CSV from `data/<server>/<year>/<week>.csv` in the
+   feed repo. Header check rejects producer CSVs older than
+   `MIN_FEED_SCHEMA_VERSION` (the first feed-action release that ships
+   inline abstracts) with a clear error — older outputs would silently
+   ship empty-abstract verdicts.
 2. **Category pre-filter (optional, free).** Drop rows whose `Category`
    isn't on the allowlist. Skips paying for LLM calls on obviously off-topic
    work.
 3. **Cap (optional).** `max_papers` truncates the candidate set; useful for cost
    ceilings during prototyping.
-4. **Abstract fetch.** Pull the abstract from
-   `https://api.biorxiv.org/details/{server}/{doi}` for every survivor. The
-   abstract is required input for both the relevance and extraction passes
-   (titles alone often don't carry enough signal for narrow topics).
-5. **Relevance filter.** `POST https://models.github.ai/inference/chat/completions`
+4. **Relevance filter.** `POST https://models.github.ai/inference/chat/completions`
    with `temperature=0`, `max_tokens=4`, one paper at a time. The user message
-   carries `Title`, `Category`, and `Abstract`. The system prompt is
-   `DEFAULT_RELEVANCE_PROMPT` with `{topic}` substituted, or fully overridden
-   via the `relevance_prompt` input.
-6. **Enrichment (optional).** For each YES, run the extraction prompt against
-   the already-fetched abstract.
-7. **Artifact upload.** `relevant.csv` + `extracts.jsonl` + `summary.md`.
-8. **Triage (optional, separate reusable workflow).**
+   carries `Title`, `Category`, and `Abstract` (the abstract is sourced from
+   the producer CSV's `Abstract` column — no per-paper remote fetch since
+   v0.3.0). The system prompt is `DEFAULT_RELEVANCE_PROMPT` with `{topic}`
+   substituted, or fully overridden via the `relevance_prompt` input.
+5. **Enrichment (optional).** For each YES, run the extraction prompt against
+   the same CSV-sourced abstract.
+6. **Artifact upload.** `relevant.csv` + `extracts.jsonl` + `summary.md`.
+7. **Triage (optional, separate reusable workflow).**
    `triage-to-issues.yaml` (v0.2.4) downloads the artifact and opens one
    GitHub issue per row of `extracts.jsonl` via
    `scripts/triage_to_issues.py` (`gh issue create`, list-form subprocess,
@@ -80,7 +81,7 @@ for the authoritative list. Highlights:
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
 | `max_papers` | 0 | 0 = no cap. |
 | `model` | `openai/gpt-4o-mini` | Any GitHub Models–supported id. |
-| `enrich` | `true` | Toggles the abstract fetch + extraction pass. |
+| `enrich` | `true` | Toggles the structured-extraction pass (operates on the CSV-supplied abstract). |
 | `relevance_prompt` / `extraction_prompt` | "" | Override the defaults. |
 | `eval_repo` | `qte77/gha-rxiv-paper-eval` | Owner/repo hosting the reusable workflow's source. Fork users override. |
 | `eval_ref` | **required** | Tag/branch/SHA matching the caller's `uses: @<ref>` pin. Reusable workflows cannot auto-derive this (see v0.2.1 changelog). |
@@ -108,8 +109,6 @@ Environment knobs (`RXIV_EVAL_*`):
 - `LLM_CALL_INTERVAL_SECS` (default `1.5`) — steady-state gap between
   successive relevance calls. Per-call retry alone cannot rescue a burst that
   trips a per-minute rate ceiling; this throttle prevents the burst.
-- `ARXIV_REQUEST_DELAY_SECS` (default `3.0`) — polite delay before each arxiv
-  abstract fetch.
 - `MODELS_URL` — override the chat-completions endpoint (default GitHub
   Models). Accepts any OpenAI-compatible URL.
 - `OFFLINE` / `STUB_MODE` — stub the LLM in tests (`yes` / `no` / `hash` /
@@ -120,11 +119,11 @@ Secrets:
 - `models-token` *(optional, since v0.2.2)* — fine-grained PAT with
   `models: read`. The workflow uses
   `secrets.models-token || secrets.GITHUB_TOKEN` for both the `gh api` feed
-  fetch and the GitHub Models REST POST. `GITHUB_TOKEN` works for ad-hoc
-  smoke tests of ~5 papers, but its Models quota is single-digit-per-day
-  org-wide — any non-trivial weekly batch will 429 every call without a
-  PAT. Consumers still declare `permissions: models: read` so the fallback
-  path works when no PAT is configured.
+  fetch and the GitHub Models REST POST. `GITHUB_TOKEN` with
+  `permissions: models: read` is sufficient for typical weekly batches;
+  supply a fine-grained PAT only if you observe quota-related HTTP 429s in
+  practice. Consumers still declare `permissions: models: read` so the
+  fallback path works when no PAT is configured.
 
 ## Determinism
 
@@ -135,44 +134,29 @@ Secrets:
 
 ## Servers and schema adapters
 
-| Server | Producer CSV columns | Abstract source |
-| --- | --- | --- |
-| `biorxiv`, `medrxiv` | `Date,ISOWeek,DOI,Version,Category,Title,Authors` | `https://api.biorxiv.org/details/{server}/{doi}` (JSON) |
-| `arxiv` | `Published,Weekday(Monday==0),Updated,ID,Version,Title` | `https://export.arxiv.org/api/query?id_list={id}` (Atom XML) |
+| Server | Producer CSV columns |
+| --- | --- |
+| `biorxiv`, `medrxiv` | `Date,ISOWeek,DOI,Version,Category,Title,Authors,Abstract` |
+| `arxiv` | `Published,ISOWeek,Updated,ID,Version,Title,Categories,Authors,Abstract` |
 
-The arxiv producer CSV is missing `Category` and `Authors`, so `--categories`
-is a no-op for `--server=arxiv` (eval prints a WARN and resets the filter).
-A pydantic `ArxivCsvRow` model validates the raw row and `to_paper()` maps
-it onto the normalized `Paper` shape: arxiv id lands in `doi`, `iso_week` is
-derived from `Published`, and the single-quoted title is unquoted.
+Both shapes ship the `Abstract` inline as of `gha-rxiv-feed-action`
+v0.2.2 (= `MIN_FEED_SCHEMA_VERSION`); the eval script reads it directly
+from the row. Older producer outputs that lack the column are rejected at
+`load_papers` with a `SystemExit` pointing the operator at the minimum
+feed-action release.
 
-### Why `defusedxml` for the arxiv Atom response
-
-The arxiv abstract endpoint returns Atom XML. Stdlib
-`xml.etree.ElementTree.fromstring` is vulnerable to known XML attacks
-(billion laughs, quadratic blowup; Python 3.7.1+ mitigates XXE only). The
-Python docs themselves recommend `defusedxml` as the canonical defense:
-<https://docs.python.org/3/library/xml.html#the-defusedxml-package>.
-Costs: one small pure-Python dep, no transitive deps, drop-in
-(`defusedxml.ElementTree.fromstring` matches stdlib's signature; same
-`ParseError`). Alternatives considered and rejected: `# nosec` (suppresses
-without fixing), custom hardening (reinvents the wheel), regex parsing
-(brittle).
+The `ArxivCsvRow` pydantic adapter maps `Categories` (semicolon-separated)
+to `Paper.category` via `to_paper()` and passes `Authors` + `Abstract`
+through unchanged. Both Authors and Abstract default to `""` at the row
+model layer so older pre-9-col fixtures still validate; the load-time
+header check is what enforces the production minimum.
 
 ### Outbound HTTP chokepoint
 
-All non-Models GETs go through `_urlopen_bytes(url, timeout=30)`, which
-refuses non-`https://` schemes. This keeps a single Bandit B310 suppression
-site instead of sprinkling `# nosec` across every fetcher.
-
-### FIXME — XML dependency removable once producer normalizes
-
-The arxiv XML parse exists only because the producer CSV omits the abstract
-(and `Category`/`Authors`). If `qte77/gha-rxiv-feed-action` evolves to emit
-a unified normalized CSV that includes the abstract (and category)
-pre-fetched on the producer side, the eval action can drop both the Atom
-parse and the `defusedxml` dependency. Tracked alongside the producer
-schema-unification discussion.
+The remaining outbound non-Models call is `gh api` for the feed-CSV
+fetch. The chokepoint `_urlopen_bytes(url, timeout=30)` is still defined
+for the Models REST POST and refuses non-`https://` schemes — single
+Bandit B310 suppression site.
 
 ## Why a separate eval repo (vs. living in the feed repo)
 
@@ -210,6 +194,13 @@ schema-unification discussion.
   `triage-to-issues.yaml`, backed by `scripts/triage_to_issues.py`.
   Consumers chain it after the eval job with a two-line `uses:`. Same
   `eval_ref` pinning constraint as `eval-papers.yaml`.
+- **Abstract sourced from producer CSV.** 0.3.0 drops the per-paper
+  arxiv Atom XML + biorxiv JSON abstract fetches (and the `defusedxml`
+  runtime dep) in favour of reading the `Abstract` column emitted by
+  `gha-rxiv-feed-action` v0.2.2+. Eliminates the 3s × N polite-delay
+  tax on arxiv runs and removes two retry-prone HTTP code paths.
+  `load_papers` enforces `MIN_FEED_SCHEMA_VERSION` so a stale producer
+  pin fails loudly instead of shipping empty-abstract verdicts.
 
 ### Open
 
@@ -227,7 +218,7 @@ schema-unification discussion.
 ## Local smoke test
 
 ```bash
-GH_TOKEN=$(gh auth token) python scripts/eval_papers.py \
+GH_TOKEN=$(gh auth token) uv run python scripts/eval_papers.py \
   --feed-repo <owner>/gha-rxiv-feed-action \
   --server biorxiv \
   --topic "<your topic>" \

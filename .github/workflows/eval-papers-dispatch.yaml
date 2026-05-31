@@ -47,7 +47,7 @@ on:
         type: string
         default: openai/gpt-4o-mini
       enrich:
-        description: "Fetch abstracts and run the extraction prompt."
+        description: "Run the extraction prompt on the producer-supplied abstract per YES verdict."
         type: boolean
         default: true
       feed_repo:
