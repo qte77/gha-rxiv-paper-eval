@@ -1,18 +1,28 @@
 # Design: reusable rxiv eval workflow
 
-This repo ships a single GitHub Actions reusable workflow that consumer repos
-call to turn the weekly preprint CSV produced by a sibling
+This repo ships two GitHub Actions reusable workflows that consumer repos
+chain to turn the weekly preprint CSV produced by a sibling
 [`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action)
-producer into a topic-filtered, abstract-enriched feed.
+producer into a topic-filtered, abstract-enriched feed, and (optionally) one
+GitHub issue per relevant paper:
+
+- `eval-papers.yaml` — runs the relevance/extraction pipeline and uploads
+  `relevant.csv` + `extracts.jsonl` + `summary.md` as an artifact.
+- `triage-to-issues.yaml` — downloads that artifact and opens one issue per
+  row of `extracts.jsonl` via `scripts/triage_to_issues.py`. Caller grants
+  `issues: write`; `eval_ref` must match the `uses: @<ref>` pin.
 
 ## User stories
 
 - **As a research-group maintainer**, I want a weekly Issue per relevant
   preprint with title + DOI + extracted methods so I can triage the week's
-  feed in five minutes without opening every PDF.
+  feed in five minutes without opening every PDF. Wiring this end-to-end
+  is a two-line workflow_call to `triage-to-issues.yaml` (v0.2.4) — no
+  bash/jq glue to maintain in the consumer repo.
 - **As a multi-repo org owner**, I want a single tagged workflow my teams
   pin to, so a prompt or retry-policy change ships to every consumer by
-  version bump (not by copying YAML).
+  version bump (not by copying YAML). Both the eval and triage stages
+  ship as reusable workflows pinned by the same `eval_ref`.
 - **As an operator watching a long-running scheduled run**, I want to see
   `(i/N)` progress on every per-paper log line so a 50-minute rate-limited
   run is debuggable in real time (v0.2.2).
@@ -50,6 +60,12 @@ producer CSV  ─►  fetch  ─►  category pre-filter  ─►  abstract fetch
 6. **Enrichment (optional).** For each YES, run the extraction prompt against
    the already-fetched abstract.
 7. **Artifact upload.** `relevant.csv` + `extracts.jsonl` + `summary.md`.
+8. **Triage (optional, separate reusable workflow).**
+   `triage-to-issues.yaml` (v0.2.4) downloads the artifact and opens one
+   GitHub issue per row of `extracts.jsonl` via
+   `scripts/triage_to_issues.py` (`gh issue create`, list-form subprocess,
+   no shell). Caller grants `issues: write` on the triage job and pins
+   `eval_ref` to match the `uses: @<ref>` pin.
 
 ## Inputs / outputs
 
@@ -188,6 +204,12 @@ schema-unification discussion.
 - **DOI cache.** A keyed per-DOI verdict cache lives under
   `<output-dir>/.cache/` (`Verdict` JSON per sanitized DOI). Disable via
   `RXIV_EVAL_NO_CACHE=1`. Same paper across two weeks pays once.
+- **Triage as a reusable workflow.** 0.2.4 promotes the inline
+  bash/jq/`gh issue create` triage loop (previously copy-pasted by
+  consumers from the README example) into a second reusable workflow,
+  `triage-to-issues.yaml`, backed by `scripts/triage_to_issues.py`.
+  Consumers chain it after the eval job with a two-line `uses:`. Same
+  `eval_ref` pinning constraint as `eval-papers.yaml`.
 
 ### Open
 

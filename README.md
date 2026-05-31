@@ -116,20 +116,16 @@ permissions:
 
 jobs:
   eval:
-    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.2.2
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.2.4
     with:
       topic: "<your project's relevance criterion>"
       categories: "<comma-separated bioRxiv categories>"
       # eval_ref MUST match the `uses: @<ref>` pin above. A reusable
       # workflow cannot reliably introspect its own ref at runtime.
-      eval_ref: v0.2.2
+      eval_ref: v0.2.4
       # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users set
       # `eval_repo: <their-org>/gha-rxiv-paper-eval`.
       # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
-    secrets:
-      # Optional but recommended for cron use. GITHUB_TOKEN's shared Models
-      # quota (single-digit per day org-wide) 429s any non-trivial batch.
-      models-token: ${{ secrets.MODELS_TOKEN }}
 ```
 
 To wire `topic` / `categories` (and similar) from GitHub Actions
@@ -141,29 +137,29 @@ repository or organization variables instead of hardcoding, see
 <details>
 <summary>Downstream triage job (open an issue per relevant paper)</summary>
 
+A second reusable workflow,
+[`triage-to-issues.yaml`](.github/workflows/triage-to-issues.yaml), downloads
+the eval artifact and opens one GitHub issue per row of `extracts.jsonl`. Add
+it as a follow-on job in the same consumer workflow:
+
 ```yaml
   triage:
     needs: eval
     if: ${{ fromJSON(needs.eval.outputs.relevant_count) > 0 }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: ${{ needs.eval.outputs.artifact_name }}
-          path: eval-output
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          while IFS= read -r line; do
-            doi=$(jq -r '.doi' <<<"$line")
-            title=$(jq -r '.title' <<<"$line")
-            summary=$(jq -r '.extracted.summary // ""' <<<"$line")
-            body=$(jq -n --arg d "$doi" --arg s "$summary" \
-              '"DOI: https://doi.org/\($d)\n\n\($s)"')
-            gh issue create --title "rxiv: $title" --body "$body" --label "rxiv-feed"
-          done < eval-output/extracts.jsonl
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/triage-to-issues.yaml@v0.2.4
+    with:
+      artifact_name: ${{ needs.eval.outputs.artifact_name }}
+      # eval_ref MUST match the `uses: @<ref>` pin on this line.
+      eval_ref: v0.2.4
+      # Optional: label (default "rxiv-feed"), title_prefix (default "rxiv:").
+    permissions:
+      contents: read
+      issues: write
 ```
+
+The caller needs `issues: write` (granted on the job above) for issue
+creation. See [`examples/consumer-eval.yaml`](examples/consumer-eval.yaml)
+for a full eval + triage pairing.
 
 </details>
 
@@ -171,11 +167,12 @@ repository or organization variables instead of hardcoding, see
 
 The `permissions: models: read` declaration on the caller authorizes the
 auto-provided `GITHUB_TOKEN` to call GitHub Models, and covers the public-repo
-`gh api` feed fetch. **But** the auto-`GITHUB_TOKEN`'s Models quota is
-single-digit-per-day org-wide — it 429s on any non-trivial weekly batch. For
-scheduled runs, pass a fine-grained PAT with `models: read` as the optional
-`models-token` secret (stored as `MODELS_TOKEN` on the caller repo). The
-workflow falls back to `GITHUB_TOKEN` when the secret is absent.
+`gh api` feed fetch performed against the upstream feed-action's data repo.
+No additional secret wiring is required for typical weekly batches.
+
+If you ever need to override the token (e.g. to use a fine-grained PAT with
+broader scopes), the workflow accepts an optional `models-token` secret and
+falls back to `GITHUB_TOKEN` when it's absent.
 
 For local runs the script reads `GH_TOKEN` from the environment — `gh auth
 token` provides one with both `gh api` and (depending on your account's
@@ -190,6 +187,8 @@ scopes) Models access.
 
 - [`Makefile`](Makefile) — single entry point for local + CI tasks (`make help`).
 - [`.github/workflows/eval-papers.yaml`](.github/workflows/eval-papers.yaml) — reusable workflow (`workflow_call`).
+- [`.github/workflows/triage-to-issues.yaml`](.github/workflows/triage-to-issues.yaml) — reusable follow-on workflow that opens one GitHub issue per relevant paper.
 - [`.github/workflows/eval-papers-dispatch.yaml`](.github/workflows/eval-papers-dispatch.yaml) — manual-dispatch wrapper that doubles as a working example.
 - [`scripts/eval_papers.py`](scripts/eval_papers.py) — driver invoked by the workflow; runnable standalone.
+- [`scripts/triage_to_issues.py`](scripts/triage_to_issues.py) — driver invoked by the triage workflow; runnable standalone.
 - [`docs/design.md`](docs/design.md) — pipeline, inputs/outputs, open questions.
