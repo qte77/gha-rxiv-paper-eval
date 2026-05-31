@@ -5,8 +5,8 @@ Pipeline:
     1. Fetch data/<server>/<year>/<week>.csv from the feed repo.
     2. Optional cheap pre-filter on category allowlist + max_papers cap.
     3. LLM relevance pass (YES/NO, temperature 0) per row -> relevant.csv.
-    4. Optional enrichment: fetch abstract from rxiv API + structured extraction
-       -> extracts.jsonl.
+    4. Optional enrichment: structured extraction on the CSV-supplied
+       abstract -> extracts.jsonl.
     5. Write summary.md.
 
 Designed to be invoked from .github/workflows/eval-papers.yaml.
@@ -31,10 +31,6 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
-# NOTE: drop defusedxml + Atom parsing once the producer (gha-rxiv-feed-action)
-# emits a normalized arxiv CSV that already carries the abstract. See
-# docs/design.md "Servers and schema adapters".
-import defusedxml.ElementTree as ET  # noqa: N817  ET mirrors stdlib xml.etree convention
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -92,11 +88,14 @@ DEFAULT_TOPIC = (
     "and tool-augmented LLM workflows"
 )
 
-RXIV_DETAILS_URL = "https://api.biorxiv.org/details/{server}/{doi}"
-ARXIV_QUERY_URL = "https://export.arxiv.org/api/query?id_list={arxiv_id}"
-ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+
+# First gha-rxiv-feed-action release that emits the `Abstract` column on all
+# three servers (arxiv 9-col, bio/med 8-col). Older producer outputs lack
+# the column and the eval pipeline rejects them at load time with a clear
+# error — see `_assert_min_feed_schema`.
+MIN_FEED_SCHEMA_VERSION = "0.2.2"
 
 # arxiv ids are not DOIs; doi.org won't resolve them. Bio servers use real
 # DOIs registered with CrossRef so doi.org is the canonical resolver.
@@ -127,9 +126,6 @@ class Settings(BaseSettings):
     retry_max_attempts: int = 5
     retry_base_secs: float = 4.0
     no_cache: bool = False
-    # arxiv asks for ~3s between requests; back-to-back fetches otherwise
-    # quickly trip HTTP 429. Set to 0 in tests / when running offline.
-    arxiv_request_delay_secs: float = 3.0
     # Inter-call gap between LLM relevance requests. GitHub Models free tier
     # is roughly 10-20 req/min; per-call retry can mask short bursts but the
     # honest fix is steady-state throttling. Set to 0 in tests.
@@ -152,17 +148,18 @@ class Paper(BaseModel):
     category: str = Field(alias="Category")
     title: str = Field(alias="Title")
     authors: str = Field(alias="Authors")
+    abstract: str = Field(default="", alias="Abstract")
 
 
 class ArxivCsvRow(BaseModel):
     """Raw row of the arxiv producer CSV (`data/arxiv/<year>/<week>.csv`).
 
     Schema differs from the biorxiv/medrxiv `Paper`: arxiv id replaces DOI
-    and title is single-quoted. The producer schema evolved: pre-2026 weeks
-    had `Weekday(Monday==0)` and no Categories; 2026+ weeks use `ISOWeek`
-    and add a `Categories` column with semicolon-separated arxiv tags.
-    Only the always-required fields are validated here; the rest are
-    accepted via `extra="ignore"`.
+    and title is single-quoted. Only the always-required fields are
+    validated here; the rest are accepted via `extra="ignore"`.
+    Categories/Authors/Abstract default to empty so older pre-9-col rows
+    still validate at the model layer — the load-time header check in
+    `load_papers` is what enforces `MIN_FEED_SCHEMA_VERSION`.
     """
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
@@ -171,6 +168,8 @@ class ArxivCsvRow(BaseModel):
     version: str = Field(alias="Version")
     title: str = Field(alias="Title")
     categories: str = Field(default="", alias="Categories")
+    authors: str = Field(default="", alias="Authors")
+    abstract: str = Field(default="", alias="Abstract")
 
     def to_paper(self) -> Paper:
         """Adapt this arxiv row to the normalized `Paper` shape."""
@@ -184,7 +183,8 @@ class ArxivCsvRow(BaseModel):
             version=self.version,
             category=primary_cat,
             title=self.title.strip().strip("'").strip(),
-            authors="",
+            authors=self.authors,
+            abstract=self.abstract,
         )
 
 
@@ -263,10 +263,22 @@ def _paper_from_arxiv_row(row: dict) -> Paper:
     return ArxivCsvRow.model_validate(row).to_paper()
 
 
+def _assert_min_feed_schema(fieldnames: list[str], csv_path: Path) -> None:
+    """Reject producer CSVs that predate the abstract-in-CSV schema."""
+    if "Abstract" not in fieldnames:
+        raise SystemExit(
+            f"Producer CSV {csv_path} is missing the `Abstract` column. "
+            f"Upgrade gha-rxiv-feed-action to >= v{MIN_FEED_SCHEMA_VERSION}, "
+            "which emits abstracts inline (eval no longer fetches per-paper)."
+        )
+
+
 def load_papers(csv_path: Path, server: str = "biorxiv") -> list[Paper]:
     """Read the producer CSV and return rows as normalized `Paper` instances."""
     with csv_path.open(newline="") as f:
-        rows = list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        _assert_min_feed_schema(list(reader.fieldnames or []), csv_path)
+        rows = list(reader)
     if server == "arxiv":
         return [_paper_from_arxiv_row(row) for row in rows]
     return [Paper.model_validate(row) for row in rows]
@@ -274,7 +286,9 @@ def load_papers(csv_path: Path, server: str = "biorxiv") -> list[Paper]:
 
 def write_papers(papers: list[Paper], dest: Path) -> None:
     """Serialize papers back to a CSV with the canonical column order."""
-    fieldnames = ["Date", "ISOWeek", "DOI", "Version", "Category", "Title", "Authors"]
+    fieldnames = [
+        "Date", "ISOWeek", "DOI", "Version", "Category", "Title", "Authors", "Abstract",
+    ]
     with dest.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
@@ -462,52 +476,6 @@ def _urlopen_bytes(
         return resp.read()
 
 
-def _fetch_arxiv_abstract(arxiv_id: str) -> str:
-    settings = Settings()
-    # arxiv asks for ~3s between requests; back-to-back fetches otherwise
-    # quickly trip HTTP 429. Configurable via RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS.
-    if settings.arxiv_request_delay_secs > 0:
-        time.sleep(settings.arxiv_request_delay_secs)
-    url = ARXIV_QUERY_URL.format(arxiv_id=arxiv_id)
-    try:
-        data = _with_retry(lambda: _urlopen_bytes(url), settings)
-    except RuntimeError as exc:
-        print(f"WARN: abstract fetch failed for {arxiv_id}: {exc}", file=sys.stderr)
-        return ""
-    try:
-        root = ET.fromstring(data)
-    except ET.ParseError as exc:
-        print(f"WARN: abstract parse failed for {arxiv_id}: {exc}", file=sys.stderr)
-        return ""
-    summary = root.find("atom:entry/atom:summary", ATOM_NS)
-    if summary is None or summary.text is None:
-        return ""
-    return summary.text.strip()
-
-
-def _fetch_rxiv_abstract(server: str, doi: str) -> str:
-    settings = Settings()
-    url = RXIV_DETAILS_URL.format(server=server, doi=doi)
-    try:
-        payload = json.loads(_with_retry(lambda: _urlopen_bytes(url), settings))
-    except (RuntimeError, json.JSONDecodeError) as exc:
-        print(f"WARN: abstract fetch failed for {doi}: {exc}", file=sys.stderr)
-        return ""
-    collection = payload.get("collection") or []
-    if not collection:
-        return ""
-    return collection[0].get("abstract", "") or ""
-
-
-def fetch_abstract(server: str, doi: str) -> str:
-    """Dispatch on server and fetch the paper's abstract; empty string on failure."""
-    if Settings().offline:
-        return ""
-    if server == "arxiv":
-        return _fetch_arxiv_abstract(doi)
-    return _fetch_rxiv_abstract(server, doi)
-
-
 def extract_fields(abstract: str, *, model: str, system_prompt: str) -> ExtractedFields:
     """Run the structured-extraction prompt and return parsed fields."""
     if not abstract:
@@ -603,7 +571,6 @@ def _prefilter(papers: list[Paper], categories: str, max_papers: int) -> list[Pa
 def _run_relevance_pass(
     papers: list[Paper],
     *,
-    server: str,
     model: str,
     relevance_prompt: str,
     output_dir: Path,
@@ -619,7 +586,7 @@ def _run_relevance_pass(
     total = len(papers)
     interval = Settings().llm_call_interval_secs
     for i, paper in enumerate(papers, 1):
-        abstract = fetch_abstract(server, paper.doi)
+        abstract = paper.abstract
         try:
             keep = is_relevant(
                 paper,
@@ -671,14 +638,25 @@ def _run_extraction_pass(
                 print(f"[{i}/{total}] extract OK {paper.doi}", file=sys.stderr)
             record = {
                 **paper.model_dump(),
-                "abstract": abstract,
                 "extracted": fields.model_dump(),
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _warn_deprecated_env_vars() -> None:
+    """One-release deprecation cycle for env vars removed in 0.3.0."""
+    if os.environ.get("RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS"):
+        print(
+            "WARN: RXIV_EVAL_ARXIV_REQUEST_DELAY_SECS is deprecated since v0.3.0 "
+            "(abstracts are read from the producer CSV; no remote fetch). "
+            "Remove from your environment; the next release drops the check.",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
     """Drive the full pipeline: fetch, prefilter, classify, enrich, write artifacts."""
+    _warn_deprecated_env_vars()
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -694,16 +672,7 @@ def main() -> int:
     total = len(papers)
     print(f"Loaded {total} papers", file=sys.stderr)
 
-    categories = args.categories
-    if args.server == "arxiv" and categories:
-        print(
-            "WARN: --categories ignored for --server=arxiv "
-            "(CSV has no Category column)",
-            file=sys.stderr,
-        )
-        categories = ""
-
-    papers = _prefilter(papers, categories, args.max_papers)
+    papers = _prefilter(papers, args.categories, args.max_papers)
     after_prefilter = len(papers)
 
     relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(
@@ -711,7 +680,6 @@ def main() -> int:
     )
     relevant, call_failures = _run_relevance_pass(
         papers,
-        server=args.server,
         model=args.model,
         relevance_prompt=relevance_prompt,
         output_dir=output_dir,
