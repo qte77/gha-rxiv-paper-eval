@@ -1,6 +1,6 @@
 [project]
 name = "gha-rxiv-paper-eval"
-version = "0.2.4"
+version = "0.3.0"
 description = "Reusable GitHub Actions workflow that filters preprint feeds via GitHub Models."
 authors = [
     {name = "qte77", email = "qte@77.gh"}
@@ -8,7 +8,6 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "defusedxml>=0.7",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
 ]
