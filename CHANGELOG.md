@@ -14,6 +14,12 @@ entries are PR-scoped.
   lands), failing the eval before any LLM call. Explicit `week`/`year` inputs
   still override. Closes #69, #61; unblocks the weekly self-test (#14).
 
+### Docs
+- Updated the empty-`week`/`year` default wording from "current ISO week" to
+  "last completed ISO week" across the input descriptions (`eval-papers.yaml`,
+  `eval-papers-dispatch.yaml`), `README.md`, `docs/design.md`, and both
+  `examples/consumer-eval*.yaml` so the documented default matches the fix.
+
 ## [0.3.0] - 2026-05-31
 
 ### Deprecated
