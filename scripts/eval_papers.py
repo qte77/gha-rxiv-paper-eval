@@ -228,11 +228,18 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_year_week(year: str, week: str) -> tuple[str, str]:
-    """Return the (year, week) pair to fetch; empty inputs default to today (UTC)."""
+    """Resolve the (year, week) to fetch; empty inputs default to last week.
+
+    Empty year/week resolve to the last completed ISO week (UTC). The feed
+    publishes only completed weeks, so defaulting to the current in-progress
+    week 404s on early-week runs (e.g. a Tuesday cron before the Monday feed
+    lands). Stepping back 7 days lands on a published week; ``isocalendar()``
+    handles the year/week rollover.
+    """
     if year and week:
         return year, week.zfill(2)
-    today = dt.datetime.now(dt.timezone.utc).date()
-    iso_year, iso_week, _ = today.isocalendar()
+    last_completed = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=7)
+    iso_year, iso_week, _ = last_completed.isocalendar()
     return year or str(iso_year), week.zfill(2) if week else f"{iso_week:02d}"
 
 

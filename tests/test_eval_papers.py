@@ -5,6 +5,7 @@ Run locally:
 """
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
 import os
@@ -1200,6 +1201,35 @@ class DefaultRelevancePromptTests(unittest.TestCase):
         # `is_relevant` parses the response by looking at the first token; the
         # prompt must still ask for a YES/NO answer.
         self.assertIn("YES or NO", eval_papers.DEFAULT_RELEVANCE_PROMPT)
+
+
+# ---------------------------------------------------------------------------
+# ResolveYearWeekTests
+# ---------------------------------------------------------------------------
+
+
+class ResolveYearWeekTests(unittest.TestCase):
+    """Empty year/week must resolve to the LAST COMPLETED ISO week, not the
+    current in-progress one. The feed publishes only completed weeks, so a
+    current-week default 404s on early-week runs (#61, #69). Year rollover is
+    the non-obvious edge: late-December/early-January the ISO year diverges
+    from the calendar year.
+    """
+
+    def _resolve_at(self, fixed_now: dt.datetime) -> tuple[str, str]:
+        with patch.object(eval_papers.dt, "datetime") as mock_datetime:
+            mock_datetime.now.return_value = fixed_now
+            return eval_papers.resolve_year_week("", "")
+
+    def test_empty_defaults_to_last_completed_week(self) -> None:
+        # Tue 2026-06-16 is ISO 2026-W25 (in progress); the feed has only W24.
+        fixed = dt.datetime(2026, 6, 16, 9, 0, tzinfo=dt.timezone.utc)
+        self.assertEqual(self._resolve_at(fixed), ("2026", "24"))
+
+    def test_year_rollover_resolves_to_prior_iso_year(self) -> None:
+        # Tue 2027-01-05 is ISO 2027-W01; last completed week is 2026-W53.
+        fixed = dt.datetime(2027, 1, 5, 9, 0, tzinfo=dt.timezone.utc)
+        self.assertEqual(self._resolve_at(fixed), ("2026", "53"))
 
 
 if __name__ == "__main__":

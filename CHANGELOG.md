@@ -6,6 +6,14 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Fixed
+- **Weekly 404 on empty `week`/`year` inputs.** `resolve_year_week` now defaults
+  to the last completed ISO week (UTC) instead of the current in-progress one.
+  The feed publishes only completed weeks, so the old current-week default 404'd
+  every early-week run (e.g. the Tuesday self-test cron before the Monday feed
+  lands), failing the eval before any LLM call. Explicit `week`/`year` inputs
+  still override. Closes #69, #61; unblocks the weekly self-test (#14).
+
 ## [0.3.0] - 2026-05-31
 
 ### Deprecated
