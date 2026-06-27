@@ -89,7 +89,7 @@ artifact for downstream jobs.
 <summary>Trigger the dispatch wrapper from CLI</summary>
 
 ```bash
-# Bare minimum — last completed ISO week, biorxiv, max_papers=5 (dispatch default):
+# Bare minimum — newest published feed week, biorxiv, max_papers=5 (dispatch default):
 gh workflow run eval-papers-dispatch.yaml
 
 # Overrides (any subset):

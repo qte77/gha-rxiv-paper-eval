@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       week:
-        description: "ISO week (1-53). Empty = last completed ISO week."
+        description: "ISO week (1-53). Empty = newest published feed week."
         type: string
         default: ""
       year:
-        description: "ISO year. Empty = last completed ISO week."
+        description: "ISO year. Empty = newest published feed week."
         type: string
         default: ""
 

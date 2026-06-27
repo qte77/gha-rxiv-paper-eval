@@ -77,7 +77,7 @@ for the authoritative list. Highlights:
 | --- | --- | --- |
 | `topic` | required | Free-text. Substituted into the relevance system prompt. |
 | `server` | `biorxiv` | `biorxiv`, `medrxiv`, or `arxiv`. |
-| `year` / `week` | last completed ISO week | UTC. Empty resolves to N-1 (the feed only publishes completed weeks). Override for backfills. |
+| `year` / `week` | newest published | UTC. Empty auto-discovers the newest week the feed has actually published for the server (resilient to its variable publish lag). Override for backfills. |
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
 | `max_papers` | 0 | 0 = no cap. |
 | `model` | `openai/gpt-4o-mini` | Any GitHub Models–supported id. |

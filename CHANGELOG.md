@@ -7,18 +7,22 @@ entries are PR-scoped.
 ## [Unreleased]
 
 ### Fixed
-- **Weekly 404 on empty `week`/`year` inputs.** `resolve_year_week` now defaults
-  to the last completed ISO week (UTC) instead of the current in-progress one.
-  The feed publishes only completed weeks, so the old current-week default 404'd
-  every early-week run (e.g. the Tuesday self-test cron before the Monday feed
-  lands), failing the eval before any LLM call. Explicit `week`/`year` inputs
-  still override. Closes #69, #61; unblocks the weekly self-test (#14).
+- **Weekly 404 on empty `week`/`year` inputs.** When `week`/`year` are empty,
+  the eval now **auto-discovers the newest week the feed has actually
+  published** (lists `data/<server>/` via `gh api` and takes the max year/week)
+  instead of computing a date-derived default. The feed's publish cadence lags
+  the calendar by a variable amount — observed 2 ISO weeks for biorxiv on
+  2026-06-27 (feed had W24 while the calendar was W26) — so both the old
+  current-week default *and* a naive last-completed (N-1) default 404 before
+  any LLM call. Auto-discovery is resilient to any lag and independent of the
+  week-start (Mon/Sun) convention. Explicit `week`/`year` still override. New
+  helpers `_gh_api_json`, `_max_numeric_entry`, `_discover_latest_week`.
+  Closes #69, #61; unblocks the weekly self-test (#14).
 
 ### Docs
-- Updated the empty-`week`/`year` default wording from "current ISO week" to
-  "last completed ISO week" across the input descriptions (`eval-papers.yaml`,
-  `eval-papers-dispatch.yaml`), `README.md`, `docs/design.md`, and both
-  `examples/consumer-eval*.yaml` so the documented default matches the fix.
+- Input descriptions (`eval-papers.yaml`, `eval-papers-dispatch.yaml`),
+  `README.md`, `docs/design.md`, and both `examples/consumer-eval*.yaml`
+  document the empty-`week`/`year` default as the newest published feed week.
 
 ## [0.3.0] - 2026-05-31
 

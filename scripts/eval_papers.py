@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -227,20 +228,68 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def resolve_year_week(year: str, week: str) -> tuple[str, str]:
-    """Resolve the (year, week) to fetch; empty inputs default to last week.
+def _gh_api_json(api_path: str) -> list[dict]:
+    """GET a `gh api` contents listing and parse it as JSON.
 
-    Empty year/week resolve to the last completed ISO week (UTC). The feed
-    publishes only completed weeks, so defaulting to the current in-progress
-    week 404s on early-week runs (e.g. a Tuesday cron before the Monday feed
-    lands). Stepping back 7 days lands on a published week; ``isocalendar()``
-    handles the year/week rollover.
+    Used to discover which feed CSVs exist (list-form subprocess, no shell;
+    `gh` is on the Actions runner PATH and authenticates via GH_TOKEN).
     """
-    if year and week:
-        return year, week.zfill(2)
-    last_completed = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=7)
-    iso_year, iso_week, _ = last_completed.isocalendar()
-    return year or str(iso_year), week.zfill(2) if week else f"{iso_week:02d}"
+    # S603/S607: list-form invocation (no shell); `gh` is provided by the
+    # runner PATH and `api_path` is workflow-controlled.
+    gh_cmd = ["gh", "api", api_path]
+    proc = subprocess.run(  # noqa: S603
+        gh_cmd, check=False, capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        raise SystemExit(f"Failed to list {api_path}\nstderr: {proc.stderr.strip()}")
+    return json.loads(proc.stdout)
+
+
+def _max_numeric_entry(entries: list[dict], suffix: str) -> str:
+    """Return the numerically-largest ``<digits>{suffix}`` name in a gh listing.
+
+    ``entries`` is a GitHub contents API listing; names look like ``24.csv``
+    (suffix ``.csv``) or ``2026`` (suffix ``""``). Numeric — not lexical —
+    ordering matters so ``24`` beats ``9``. Non-matching names are ignored;
+    raises if none match.
+    """
+    pattern = re.compile(rf"^(\d+){re.escape(suffix)}$")
+    nums = [m.group(1) for e in entries if (m := pattern.match(e.get("name", "")))]
+    if not nums:
+        raise SystemExit(f"No '<digits>{suffix}' entries in feed listing")
+    return max(nums, key=int)
+
+
+def _discover_latest_week(feed_repo: str, server: str, year: str) -> tuple[str, str]:
+    """Return the newest (year, week) actually published under data/<server>/.
+
+    The feed's publish cadence lags the calendar by a variable amount (1-2+ ISO
+    weeks for biorxiv), so a date-derived 'current' or 'last completed' week
+    routinely 404s. Listing the feed and taking the max year+week is resilient
+    to any lag and independent of the week-start (Mon/Sun) convention.
+    """
+    if not year:
+        year = _max_numeric_entry(
+            _gh_api_json(f"repos/{feed_repo}/contents/data/{server}"), ""
+        )
+    weeks = _gh_api_json(f"repos/{feed_repo}/contents/data/{server}/{year}")
+    return year, _max_numeric_entry(weeks, ".csv").zfill(2)
+
+
+def resolve_year_week(
+    year: str, week: str, *, feed_repo: str, server: str
+) -> tuple[str, str]:
+    """Resolve the (year, week) CSV to fetch.
+
+    An explicit ``week`` is honored verbatim (``year`` defaults to the current
+    ISO year). When ``week`` is empty, auto-discover the newest week the feed
+    has actually published (see `_discover_latest_week`) — a date-derived
+    default 404s because the feed lags the calendar unpredictably (#61, #69).
+    """
+    if week:
+        iso_year = dt.datetime.now(dt.timezone.utc).isocalendar().year
+        return (year or str(iso_year)), week.zfill(2)
+    return _discover_latest_week(feed_repo, server, year)
 
 
 def fetch_feed(feed_repo: str, server: str, year: str, week: str, dest: Path) -> None:
@@ -668,7 +717,9 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    year, week = resolve_year_week(args.year, args.week)
+    year, week = resolve_year_week(
+        args.year, args.week, feed_repo=args.feed_repo, server=args.server
+    )
     (output_dir / ".resolved_yw").write_text(f"{year} {week}\n")
 
     feed_csv = output_dir / "feed.csv"
