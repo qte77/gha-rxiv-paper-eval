@@ -103,7 +103,9 @@ gh run download "$run"
 ```
 
 Inputs: `topic`, `server` (biorxiv/medrxiv/arxiv), `year`, `week`,
-`categories`, `max_papers` (0 = no cap), `model`, `enrich`, `feed_repo`.
+`categories`, `max_papers` (0 = no cap), `max_llm_calls` (0 = no cap;
+caps LLM calls to the top-N papers by topic-keyword overlap), `model`,
+`enrich`, `feed_repo`.
 
 </details>
 

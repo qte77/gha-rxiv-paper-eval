@@ -34,6 +34,11 @@ GitHub issue per relevant paper:
   `secrets.models-token` if I hit GitHub-Models quota limits, while the
   auto-provided `GITHUB_TOKEN` covers typical weekly batches without extra
   configuration (v0.2.2 restores the v0.1.x optional secret).
+- **As a quota-limited consumer**, I want to cap the run to the top-N
+  most-likely-relevant papers (`max_llm_calls`) so a busy week (100–500
+  candidates) stays under my daily Models quota — picked by a free,
+  deterministic keyword signal rather than the alphabetically-first N that
+  `max_papers` would take.
 
 ## Pipeline
 
@@ -50,8 +55,12 @@ producer CSV ─► fetch ─► category pre-filter ─► LLM YES/NO ─► LL
 2. **Category pre-filter (optional, free).** Drop rows whose `Category`
    isn't on the allowlist. Skips paying for LLM calls on obviously off-topic
    work.
-3. **Cap (optional).** `max_papers` truncates the candidate set; useful for cost
-   ceilings during prototyping.
+3. **Cap (optional).** Two independent caps shrink the candidate set before the
+   paid LLM step. `max_papers` truncates in CSV order (a cheap cost ceiling for
+   prototyping). `max_llm_calls` instead ranks survivors by topic-keyword
+   overlap on title+category+abstract and keeps only the top N — picking
+   high-signal papers to stay under a provider's daily quota (#7) rather than
+   the alphabetically-first N. Both are stdlib-only, deterministic, and free.
 4. **Relevance filter.** `POST https://models.github.ai/inference/chat/completions`
    with `temperature=0`, `max_tokens=4`, one paper at a time. The user message
    carries `Title`, `Category`, and `Abstract` (the abstract is sourced from
@@ -79,7 +88,8 @@ for the authoritative list. Highlights:
 | `server` | `biorxiv` | `biorxiv`, `medrxiv`, or `arxiv`. |
 | `year` / `week` | newest published | UTC. Empty auto-discovers the newest week the feed has actually published for the server (resilient to its variable publish lag). Override for backfills. |
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
-| `max_papers` | 0 | 0 = no cap. |
+| `max_papers` | 0 | 0 = no cap. Truncates in CSV order. |
+| `max_llm_calls` | 0 | 0 = no cap. Ranks survivors by topic-keyword overlap (title+category+abstract) and sends only the top N to the LLM — quota-friendly alternative to `max_papers` (#7). |
 | `model` | `openai/gpt-4o-mini` | Any GitHub Models–supported id. |
 | `enrich` | `true` | Toggles the structured-extraction pass (operates on the CSV-supplied abstract). |
 | `relevance_prompt` / `extraction_prompt` | "" | Override the defaults. |
@@ -201,12 +211,18 @@ Bandit B310 suppression site.
   tax on arxiv runs and removes two retry-prone HTTP code paths.
   `load_papers` enforces `MIN_FEED_SCHEMA_VERSION` so a stale producer
   pin fails loudly instead of shipping empty-abstract verdicts.
+- **Keyword pre-filter to cap LLM calls** (#7). `max_llm_calls` ranks the
+  post-category candidate set by topic-keyword overlap on
+  title+category+abstract and sends only the top N to the LLM, so a consumer
+  can stay under a provider's daily quota without picking the first N in CSV
+  order. Stdlib-only, deterministic, free; `0` = no cap (unchanged behavior).
 
 ### Open
 
-- **Cheap pre-filter to shrink the LLM candidate set** (tracked in #7).
-  Category allowlist + `max_papers` cap exist; a title-only heuristic
-  could drop more before the LLM call.
+- **Short-acronym keyword matching** (#63). The `_topic_keywords` tokenizer
+  drops tokens ≤ 3 chars, so domain acronyms (AMP, RNA, LLM) named in the
+  topic don't count toward the overlap score. Deferred until a real weekly
+  run misranks on a dropped acronym.
 - **Custom extraction schemas per consumer.** Today the schema is hardcoded
   in `DEFAULT_EXTRACTION_PROMPT`. If schemas diverge a lot, externalize the
   prompt into a per-consumer file the workflow path-inputs.

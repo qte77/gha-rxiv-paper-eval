@@ -20,6 +20,7 @@ SERVER    ?= arxiv
 YEAR      ?=
 WEEK      ?=
 MAX       ?= 5
+MAX_LLM_CALLS ?= 0
 OUT       ?= /tmp/rxiv-eval
 
 # -- quiet mode (default: quiet; VERBOSE=1 for full output) --
@@ -63,7 +64,7 @@ validate:  ## All quality gates: lint + complexity + test
 
 # MARK: APP
 
-smoke:  ## Local smoke test of the eval script against real APIs. Usage: make smoke [SERVER=arxiv] [YEAR=2024] [WEEK=24] [MAX=5]
+smoke:  ## Local smoke test of the eval script against real APIs. Usage: make smoke [SERVER=arxiv] [YEAR=2024] [WEEK=24] [MAX=5] [MAX_LLM_CALLS=10]
 	echo "--- smoke: $(SERVER) $(YEAR)-w$(WEEK) -> $(OUT)"
 	GH_TOKEN=$$(gh auth token) uv run python $(SCRIPT) \
 		--feed-repo $(FEED_REPO) \
@@ -71,6 +72,7 @@ smoke:  ## Local smoke test of the eval script against real APIs. Usage: make sm
 		$(if $(YEAR),--year $(YEAR)) \
 		$(if $(WEEK),--week $(WEEK)) \
 		--max-papers $(MAX) \
+		$(if $(filter-out 0,$(MAX_LLM_CALLS)),--max-llm-calls $(MAX_LLM_CALLS)) \
 		--enrich \
 		--output-dir $(OUT)
 

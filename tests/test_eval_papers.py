@@ -1206,6 +1206,57 @@ class DefaultRelevancePromptTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# KeywordPrefilterTests
+# ---------------------------------------------------------------------------
+
+
+class KeywordPrefilterTests(unittest.TestCase):
+    """The `--max-llm-calls` keyword pre-filter caps how many papers reach the
+    LLM by ranking survivors on topic-keyword overlap, so a consumer can stay
+    under a provider's daily quota without picking the first N in CSV order
+    (#7). Scoring includes the CSV-supplied abstract (#68).
+    """
+
+    def _paper(self, *, doi: str = "10.1101/x", title: str = "", category: str = "biophysics",
+               abstract: str = "") -> eval_papers.Paper:
+        return eval_papers.Paper(
+            date="2026-04-06", iso_week="15", doi=doi, version="1",
+            category=category, title=title, authors="Doe, J.", abstract=abstract,
+        )
+
+    def test_topic_keywords_drops_stopwords_and_short_tokens(self) -> None:
+        # "and" is a stopword; "AMP" (3 chars) is dropped by the >3 length
+        # rule — the known acronym gap tracked in #63, intentionally deferred.
+        self.assertEqual(
+            eval_papers._topic_keywords("antimicrobial peptides and AMP docking"),
+            {"antimicrobial", "peptides", "docking"},
+        )
+
+    def test_keyword_score_counts_abstract_terms(self) -> None:
+        # #68: score must read the CSV abstract, not just title+category.
+        vocab = {"docking", "kinase"}
+        paper = self._paper(
+            title="A study of binding",
+            category="biophysics",
+            abstract="We performed docking against a kinase target.",
+        )
+        self.assertEqual(eval_papers._keyword_score(paper, vocab), 2)
+
+    def test_prefilter_keeps_highest_scoring_n(self) -> None:
+        topic = "antimicrobial peptide docking simulation"
+        high = self._paper(doi="hi", title="antimicrobial peptide docking", abstract="simulation")
+        mid = self._paper(doi="mid", title="antimicrobial study", abstract="")
+        low = self._paper(doi="low", title="unrelated work", abstract="about cats")
+        result = eval_papers._keyword_prefilter([low, mid, high], topic, max_llm_calls=2)
+        self.assertEqual([p.doi for p in result], ["hi", "mid"])
+
+    def test_prefilter_is_noop_when_cap_zero(self) -> None:
+        # Backwards-compat acceptance from #7: max_llm_calls=0 -> unchanged.
+        papers = [self._paper(doi="a"), self._paper(doi="b")]
+        self.assertIs(eval_papers._keyword_prefilter(papers, "topic", max_llm_calls=0), papers)
+
+
+# ---------------------------------------------------------------------------
 # ResolveYearWeekTests
 # ---------------------------------------------------------------------------
 
