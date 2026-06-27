@@ -18,12 +18,33 @@ entries are PR-scoped.
   `- After keyword pre-filter: N` line in `summary.md` when the cap fires.
   Closes #7. New helpers `_topic_keywords`, `_keyword_score`, `_keyword_prefilter`.
 
+### Fixed
+- **Weekly 404 on empty `week`/`year` inputs.** When `week`/`year` are empty,
+  the eval now **auto-discovers the newest week the feed has actually
+  published** (lists `data/<server>/` via `gh api` and takes the max year/week)
+  instead of computing a date-derived default. The feed's publish cadence lags
+  the calendar by a variable amount — observed 2 ISO weeks for biorxiv on
+  2026-06-27 (feed had W24 while the calendar was W26) — so both the old
+  current-week default *and* a naive last-completed (N-1) default 404 before
+  any LLM call. Auto-discovery is resilient to any lag and independent of the
+  week-start (Mon/Sun) convention. Explicit `week`/`year` still override. New
+  helpers `_gh_api_json`, `_max_numeric_entry`, `_discover_latest_week`.
+  Closes #69, #61; unblocks the weekly self-test (#14).
+- **Dev tools downloaded on every consumer run.** The eval step ran the script
+  via `uv run python …`, which re-syncs and pulls the PEP 735 `dev` group
+  (`ruff`, `complexipy`, `pytest` + transitives, ~14 MiB) despite `make setup`
+  using `uv sync --no-dev`. Pinned the invocation to `uv run --no-dev …` so the
+  runtime environment stays runtime-only. Closes #60.
+
 ### Docs
 - Surfaced `max_llm_calls` / `MAX_LLM_CALLS` across the discoverability
   surfaces: `examples/consumer-eval.yaml`, `examples/consumer-eval-vars.yaml`,
   the `Makefile` `smoke` recipe, `README.md` inputs, and `docs/design.md`
   (pipeline cap step, inputs table, roadmap). #63 (short-acronym matching)
   recorded as the deferred follow-up. Resolves #65.
+- Input descriptions (`eval-papers.yaml`, `eval-papers-dispatch.yaml`),
+  `README.md`, `docs/design.md`, and both `examples/consumer-eval*.yaml`
+  document the empty-`week`/`year` default as the newest published feed week.
 
 ## [0.3.0] - 2026-05-31
 
