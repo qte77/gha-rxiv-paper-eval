@@ -34,6 +34,11 @@ GitHub issue per relevant paper:
   `secrets.models-token` if I hit GitHub-Models quota limits, while the
   auto-provided `GITHUB_TOKEN` covers typical weekly batches without extra
   configuration (v0.2.2 restores the v0.1.x optional secret).
+- **As a quota-limited consumer**, I want to cap the run to the top-N
+  most-likely-relevant papers (`max_llm_calls`) so a busy week (100–500
+  candidates) stays under my daily Models quota — picked by a free,
+  deterministic keyword signal rather than the alphabetically-first N that
+  `max_papers` would take.
 
 ## Pipeline
 
