@@ -18,6 +18,11 @@ entries are PR-scoped.
   week-start (Mon/Sun) convention. Explicit `week`/`year` still override. New
   helpers `_gh_api_json`, `_max_numeric_entry`, `_discover_latest_week`.
   Closes #69, #61; unblocks the weekly self-test (#14).
+- **Dev tools downloaded on every consumer run.** The eval step ran the script
+  via `uv run python …`, which re-syncs and pulls the PEP 735 `dev` group
+  (`ruff`, `complexipy`, `pytest` + transitives, ~14 MiB) despite `make setup`
+  using `uv sync --no-dev`. Pinned the invocation to `uv run --no-dev …` so the
+  runtime environment stays runtime-only. Closes #60.
 
 ### Docs
 - Input descriptions (`eval-papers.yaml`, `eval-papers-dispatch.yaml`),
