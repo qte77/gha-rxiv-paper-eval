@@ -1,0 +1,51 @@
+name: tag-release
+
+# Fires when a version bump lands on main (the squash-merge of a bump-my-version
+# PR touches pyproject.toml). Creates and pushes an annotated vX.Y.Z tag against
+# that commit. Tags are unsigned + annotated (no tag ruleset on this repo);
+# version-unchanged pushes are a clean no-op.
+
+on:
+  push:
+    branches: [main]
+    paths: [pyproject.toml]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 2  # need HEAD^ to diff the version
+
+      - name: Detect version bump
+        id: detect
+        run: |
+          set -euo pipefail
+          NEW=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          OLD=$(git show HEAD^:pyproject.toml | grep -m1 '^version = ' | sed -E 's/version = "(.*)"/\1/')
+          if [ "$NEW" = "$OLD" ]; then
+            echo "no version change ($OLD == $NEW); nothing to tag"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=$NEW" >> "$GITHUB_OUTPUT"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create + push annotated tag
+        if: steps.detect.outputs.bumped == 'true'
+        env:
+          NEW: ${{ steps.detect.outputs.new }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/v${NEW}" >/dev/null; then
+            echo "tag v${NEW} already exists at $(git rev-parse "v${NEW}"); aborting"
+            exit 1
+          fi
+          git config user.name "tag-release"
+          git config user.email "tag-release@qte77.gha"
+          git tag -a -m "Release v${NEW}" "v${NEW}"
+          git push origin "v${NEW}"

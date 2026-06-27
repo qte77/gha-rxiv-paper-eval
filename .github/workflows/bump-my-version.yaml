@@ -1,0 +1,83 @@
+name: bump-my-version
+
+# Dispatch a semver bump. Opens a PR that bumps the version (pyproject + README
+# / example pins via [tool.bumpversion]), promotes the CHANGELOG [Unreleased]
+# section into a dated release block, and resyncs uv.lock. Merge the PR after CI
+# is green; tag-release.yaml then tags vX.Y.Z against the squash-merge commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Semver part to bump"
+        required: true
+        default: patch
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      BUMP_TYPE: ${{ inputs.bump_type }}
+      BASE_BRANCH: ${{ github.ref_name }}
+      RUN_NUMBER: ${{ github.run_number }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Install deps
+        run: make sync
+
+      - name: Bump version, promote changelog, open PR
+        run: |
+          set -euo pipefail
+          git config user.name "bump-my-version"
+          git config user.email "bump-my-version@qte77.gha"
+
+          PREV=$(uv run bump-my-version show current_version)
+          # --no-tag: tag-release.yaml tags the squash-merge commit on main.
+          # --no-commit: we commit once ourselves after the changelog + lock edits.
+          uv run bump-my-version bump --no-tag --no-commit "$BUMP_TYPE"
+          NEW=$(uv run bump-my-version show current_version)
+
+          # Promote the manual Keep-a-Changelog [Unreleased] section into a dated
+          # release block (this repo has no scriv fragments).
+          TODAY=$(date -u +%Y-%m-%d)
+          awk -v ver="$NEW" -v date="$TODAY" '
+            /^## \[Unreleased\]/ && !done { print; print ""; print "## [" ver "] - " date; done=1; next }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+
+          uv lock
+
+          BRANCH="bump-${RUN_NUMBER}-${BASE_BRANCH}"
+          git switch -c "$BRANCH"
+          git add -A
+          git commit -m "feat(release): v${NEW}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$BRANCH" \
+            --title "feat(release): v${NEW}" \
+            --body "Automated bump \`${PREV}\` -> \`${NEW}\` (\`${BUMP_TYPE}\`). Promotes CHANGELOG [Unreleased] -> [${NEW}] and resyncs uv.lock. Merge once CI is green; tag-release will tag \`v${NEW}\`."

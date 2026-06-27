@@ -14,6 +14,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "bump-my-version>=0.29",
     "complexipy>=4.0",
     "pytest>=9.0.3",
     "ruff>=0.9",
@@ -66,3 +67,34 @@ convention = "google"
 [tool.complexipy]
 max-complexity-allowed = 10
 quiet = false
+
+[tool.bumpversion]
+current_version = "0.3.0"
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
+# We manage git ourselves: bump-my-version.yaml runs `bump --no-tag --no-commit`,
+# commits once on a branch, and tag-release.yaml tags the squash-merge on main.
+commit = false
+tag = false
+sign_tags = false
+allow_dirty = true
+tag_name = "v{new_version}"
+message = "feat(release): v{new_version}"
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+# README + the vars example pin `@v<ver>` / `eval_ref: v<ver>`; bump them so the
+# published examples point at the latest tag. docs/design.md and scripts/ keep
+# their historical "since v0.3.0" prose (not listed here).
+[[tool.bumpversion.files]]
+filename = "README.md"
+search = "v{current_version}"
+replace = "v{new_version}"
+
+[[tool.bumpversion.files]]
+filename = "examples/consumer-eval-vars.yaml"
+search = "v{current_version}"
+replace = "v{new_version}"

@@ -17,6 +17,12 @@ entries are PR-scoped.
   Surfaced through both `eval-papers.yaml` and the dispatch wrapper, plus an
   `- After keyword pre-filter: N` line in `summary.md` when the cap fires.
   Closes #7. New helpers `_topic_keywords`, `_keyword_score`, `_keyword_prefilter`.
+- **CI release automation.** Three workflows modeled on the sibling `paperverse`
+  repo: `bump-my-version` (dispatch a semver bump → opens a release PR),
+  `tag-release` (auto-creates the annotated `vX.Y.Z` tag when the bump lands on
+  main), and `publish-release` (cuts the GitHub Release from the CHANGELOG
+  section). Backed by a `[tool.bumpversion]` config + `bump-my-version` dev dep.
+  Closes the gap where v0.2.3–v0.3.0 were changelogged but never tagged/released.
 
 ### Fixed
 - **Weekly 404 on empty `week`/`year` inputs.** When `week`/`year` are empty,
