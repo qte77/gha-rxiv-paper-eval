@@ -430,6 +430,7 @@ class ExtractFieldsErrorIsCaughtTests(unittest.TestCase):
                     "--topic", "test topic",
                     "--categories", "microbiology",
                     "--max-papers", "5",
+                    "--week", "15",  # explicit -> skip live feed discovery
                     "--enrich",
                     "--output-dir", str(out),
                 ]
@@ -609,6 +610,7 @@ class OfflineEndToEndTests(unittest.TestCase):
                     "eval_papers.py",
                     "--feed-repo", "any/repo",
                     "--topic", "test topic for offline run",
+                    "--week", "15",  # explicit -> skip live feed discovery
                     # microbiology appears 3 times in feed-min.csv (keepers)
                     # bioengineering appears 2 times (rejects for this filter)
                     "--categories", "microbiology",
@@ -1132,6 +1134,7 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
                     "--topic", "test topic",
                     "--categories", "microbiology",
                     "--max-papers", "0",
+                    "--week", "15",  # explicit -> skip live feed discovery
                     "--output-dir", str(out),
                 ]
                 with (
@@ -1200,6 +1203,48 @@ class DefaultRelevancePromptTests(unittest.TestCase):
         # `is_relevant` parses the response by looking at the first token; the
         # prompt must still ask for a YES/NO answer.
         self.assertIn("YES or NO", eval_papers.DEFAULT_RELEVANCE_PROMPT)
+
+
+# ---------------------------------------------------------------------------
+# ResolveYearWeekTests
+# ---------------------------------------------------------------------------
+
+
+class ResolveYearWeekTests(unittest.TestCase):
+    """Empty year/week must resolve to the newest week the feed has actually
+    published — discovered by listing `data/<server>/`, not derived from the
+    calendar. The feed's publish cadence lags by a variable amount (1-2+ ISO
+    weeks for biorxiv), so any date-based guess routinely 404s (#61, #69).
+    Explicit weeks are still honored verbatim.
+    """
+
+    def test_max_numeric_entry_orders_by_int_and_strips_suffix(self) -> None:
+        # Lexical max would pick "9.csv"; numeric max must pick "24.csv".
+        entries = [
+            {"name": "9.csv"}, {"name": "13.csv"}, {"name": "24.csv"},
+            {"name": "index.json"},  # ignored: doesn't match <digits>.csv
+        ]
+        self.assertEqual(eval_papers._max_numeric_entry(entries, ".csv"), "24")
+
+    def test_max_numeric_entry_raises_when_nothing_matches(self) -> None:
+        with self.assertRaises(SystemExit):
+            eval_papers._max_numeric_entry([{"name": "README.md"}], ".csv")
+
+    def test_explicit_week_is_honored_without_feed_lookup(self) -> None:
+        # Week given -> no discovery (no _gh_api_json call), year passes through,
+        # week zero-padded. Patch _gh_api_json to assert it is NOT consulted.
+        with patch.object(eval_papers, "_gh_api_json", side_effect=AssertionError):
+            yw = eval_papers.resolve_year_week("2026", "7", feed_repo="x/y", server="biorxiv")
+        self.assertEqual(yw, ("2026", "07"))
+
+    def test_empty_week_discovers_newest_published_year_and_week(self) -> None:
+        listings = [
+            [{"name": "2025", "type": "dir"}, {"name": "2026", "type": "dir"}],
+            [{"name": "13.csv"}, {"name": "24.csv"}, {"name": "9.csv"}],
+        ]
+        with patch.object(eval_papers, "_gh_api_json", side_effect=listings):
+            yw = eval_papers.resolve_year_week("", "", feed_repo="x/y", server="biorxiv")
+        self.assertEqual(yw, ("2026", "24"))
 
 
 if __name__ == "__main__":
