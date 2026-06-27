@@ -6,6 +6,8 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-27
+
 ### Added
 - **Keyword pre-filter to cap LLM calls (`max_llm_calls`).** New workflow input
   / `--max-llm-calls` CLI flag. After the category/`max_papers` filter, ranks

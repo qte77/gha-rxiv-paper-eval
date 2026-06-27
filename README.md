@@ -119,13 +119,13 @@ permissions:
 
 jobs:
   eval:
-    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.3.0
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.4.0
     with:
       topic: "<your project's relevance criterion>"
       categories: "<comma-separated bioRxiv categories>"
       # eval_ref MUST match the `uses: @<ref>` pin above. A reusable
       # workflow cannot reliably introspect its own ref at runtime.
-      eval_ref: v0.3.0
+      eval_ref: v0.4.0
       # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users set
       # `eval_repo: <their-org>/gha-rxiv-paper-eval`.
       # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
@@ -149,11 +149,11 @@ it as a follow-on job in the same consumer workflow:
   triage:
     needs: eval
     if: ${{ fromJSON(needs.eval.outputs.relevant_count) > 0 }}
-    uses: qte77/gha-rxiv-paper-eval/.github/workflows/triage-to-issues.yaml@v0.3.0
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/triage-to-issues.yaml@v0.4.0
     with:
       artifact_name: ${{ needs.eval.outputs.artifact_name }}
       # eval_ref MUST match the `uses: @<ref>` pin on this line.
-      eval_ref: v0.3.0
+      eval_ref: v0.4.0
       # Optional: label (default "rxiv-feed"), title_prefix (default "rxiv:").
     permissions:
       contents: read

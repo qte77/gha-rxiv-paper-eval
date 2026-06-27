@@ -45,7 +45,7 @@ permissions:
 
 jobs:
   eval:
-    uses: <owner>/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.3.0
+    uses: <owner>/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.4.0
     with:
       # Required — define on the consumer repo.
       topic: ${{ vars.RXIV_TOPIC }}
@@ -63,7 +63,7 @@ jobs:
       year: ${{ inputs.year }}
       week: ${{ inputs.week }}
       # Pin matches the `uses:` ref above; mandatory since v0.2.1.
-      eval_ref: v0.3.0
+      eval_ref: v0.4.0
       # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users override.
       # eval_repo: <fork-owner>/gha-rxiv-paper-eval
     secrets:
