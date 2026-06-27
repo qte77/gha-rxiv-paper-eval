@@ -6,6 +6,25 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- **Keyword pre-filter to cap LLM calls (`max_llm_calls`).** New workflow input
+  / `--max-llm-calls` CLI flag. After the category/`max_papers` filter, ranks
+  surviving papers by topic-keyword overlap and sends only the top N to the
+  LLM, so a consumer can stay under a provider's daily quota without picking
+  the first N in CSV order. Stdlib-only, deterministic, free; `0` = no cap
+  (unchanged behavior). Scoring reads `title + category + abstract` — the
+  abstract is the highest-signal field and is CSV-supplied since v0.3.0 (#68).
+  Surfaced through both `eval-papers.yaml` and the dispatch wrapper, plus an
+  `- After keyword pre-filter: N` line in `summary.md` when the cap fires.
+  Closes #7. New helpers `_topic_keywords`, `_keyword_score`, `_keyword_prefilter`.
+
+### Docs
+- Surfaced `max_llm_calls` / `MAX_LLM_CALLS` across the discoverability
+  surfaces: `examples/consumer-eval.yaml`, `examples/consumer-eval-vars.yaml`,
+  the `Makefile` `smoke` recipe, `README.md` inputs, and `docs/design.md`
+  (pipeline cap step, inputs table, roadmap). #63 (short-acronym matching)
+  recorded as the deferred follow-up. Resolves #65.
+
 ## [0.3.0] - 2026-05-31
 
 ### Deprecated

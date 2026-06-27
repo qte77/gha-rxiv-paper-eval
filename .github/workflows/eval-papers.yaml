@@ -30,6 +30,10 @@ on:
         description: "Cap rows sent to the LLM (after category pre-filter). 0 = no cap."
         type: number
         default: 0
+      max_llm_calls:
+        description: "After the category/max_papers filter, rank survivors by topic-keyword overlap (title+category+abstract) and send only the top N to the LLM. 0 = no cap. Prefer over max_papers to stay under provider daily quotas."
+        type: number
+        default: 0
       model:
         description: "GitHub Models model id used for both relevance and extraction."
         type: string
@@ -140,6 +144,7 @@ jobs:
           INPUT_WEEK: ${{ inputs.week }}
           INPUT_CATEGORIES: ${{ inputs.categories }}
           INPUT_MAX_PAPERS: ${{ inputs.max_papers }}
+          INPUT_MAX_LLM_CALLS: ${{ inputs.max_llm_calls }}
           INPUT_MODEL: ${{ inputs.model }}
           INPUT_ENRICH: ${{ inputs.enrich }}
           INPUT_FEED_REPO: ${{ inputs.feed_repo }}
@@ -153,6 +158,7 @@ jobs:
             --server "$INPUT_SERVER"
             --model "$INPUT_MODEL"
             --max-papers "$INPUT_MAX_PAPERS"
+            --max-llm-calls "$INPUT_MAX_LLM_CALLS"
             --output-dir output
           )
           [[ -n "$INPUT_TOPIC" ]] && args+=(--topic "$INPUT_TOPIC")

@@ -39,6 +39,11 @@ jobs:
       week: ${{ inputs.week }}
       categories: "microbiology,bioinformatics,synthetic biology,pharmacology and toxicology"
       max_papers: 0
+      # Cap LLM calls to the top-N papers by topic-keyword overlap
+      # (title+category+abstract). Prefer over max_papers when the topic is
+      # focused — it picks high-signal papers instead of the alphabetically
+      # first N, which helps stay under the GitHub Models daily quota.
+      max_llm_calls: 0
       model: openai/gpt-4o-mini
       enrich: true
       # feed_repo defaults to ${caller-owner}/gha-rxiv-feed-action; override if it lives elsewhere.

@@ -18,6 +18,8 @@
 #   RXIV_SERVER     — biorxiv / medrxiv / arxiv
 #   RXIV_MODEL      — any GitHub Models id; defaults to openai/gpt-4o-mini
 #   RXIV_MAX_PAPERS — int as string; defaults to 0 (no cap)
+#   RXIV_MAX_LLM_CALLS — int as string; cap LLM calls to the top-N papers by
+#                        topic-keyword overlap; defaults to 0 (no cap)
 #
 # The triage job is identical to `consumer-eval.yaml`; see that file.
 name: rxiv weekly eval (vars-driven)
@@ -54,6 +56,9 @@ jobs:
       # `max_papers` is typed `number` upstream, but `vars.*` is always a
       # string — wrap in fromJSON so the cast lands cleanly.
       max_papers: ${{ fromJSON(vars.RXIV_MAX_PAPERS || '0') }}
+      # Same string->number coercion; ranks survivors by topic-keyword overlap
+      # and sends only the top N to the LLM (quota-friendly). 0 = no cap.
+      max_llm_calls: ${{ fromJSON(vars.RXIV_MAX_LLM_CALLS || '0') }}
       enrich: true
       year: ${{ inputs.year }}
       week: ${{ inputs.week }}
