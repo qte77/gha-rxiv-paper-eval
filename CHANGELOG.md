@@ -6,6 +6,13 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Fixed
+- **Dev tools downloaded on every consumer run.** The eval step ran the script
+  via `uv run python …`, which re-syncs and pulls the PEP 735 `dev` group
+  (`ruff`, `complexipy`, `pytest` + transitives, ~14 MiB) despite `make setup`
+  using `uv sync --no-dev`. Pinned the invocation to `uv run --no-dev …` so the
+  runtime environment stays runtime-only. Closes #60.
+
 ## [0.3.0] - 2026-05-31
 
 ### Deprecated

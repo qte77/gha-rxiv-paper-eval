@@ -161,7 +161,7 @@ jobs:
           [[ -n "$INPUT_CATEGORIES" ]] && args+=(--categories "$INPUT_CATEGORIES")
           [[ "$INPUT_ENRICH" == "true" ]] && args+=(--enrich)
 
-          uv run python scripts/eval_papers.py "${args[@]}"
+          uv run --no-dev python scripts/eval_papers.py "${args[@]}"
           cat output/.workflow_outputs >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
