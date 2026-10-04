@@ -219,6 +219,8 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "RXIV_EVAL_RETRY_MAX_ATTEMPTS",
         "RXIV_EVAL_RETRY_BASE_SECS",
         "RXIV_EVAL_NO_CACHE",
+        "RXIV_EVAL_API_BASE",
+        "RXIV_EVAL_LLM_API_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -228,6 +230,8 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.retry_max_attempts == 5
     assert s.retry_base_secs == 4.0
     assert s.no_cache is False
+    assert s.api_base == ""
+    assert s.llm_api_key == ""
 
 
 def test_settings_reads_env_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -249,3 +253,17 @@ def test_settings_offline_accepts_truthy_strings(monkeypatch: pytest.MonkeyPatch
     for value in ("1", "true", "True", "TRUE"):
         monkeypatch.setenv("RXIV_EVAL_OFFLINE", value)
         assert Settings().offline is True, f"value {value!r} should be truthy"
+
+
+def test_settings_reads_api_base_and_llm_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # OpenAI-compatible provider migration (#81, #82): api_base/llm_api_key
+    # let a consumer point at Cloudflare Workers AI, OpenRouter, Cerebras,
+    # etc. now that GitHub Models is retired.
+    monkeypatch.setenv(
+        "RXIV_EVAL_API_BASE", "https://api.cloudflare.com/client/v4/accounts/x/ai/v1"
+    )
+    monkeypatch.setenv("RXIV_EVAL_LLM_API_KEY", "cf-token")
+
+    s = Settings()
+    assert s.api_base == "https://api.cloudflare.com/client/v4/accounts/x/ai/v1"
+    assert s.llm_api_key == "cf-token"

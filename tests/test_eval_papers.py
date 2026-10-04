@@ -1298,5 +1298,221 @@ class ResolveYearWeekTests(unittest.TestCase):
         self.assertEqual(yw, ("2026", "24"))
 
 
+# ---------------------------------------------------------------------------
+# ApiBaseOverrideTests
+# ---------------------------------------------------------------------------
+
+
+class ApiBaseOverrideTests(unittest.TestCase):
+    """`RXIV_EVAL_API_BASE` (workflow input `api_base`) lets a caller point
+    at any OpenAI-compatible provider (Cloudflare Workers AI, OpenRouter,
+    Cerebras, ...) now that GitHub Models is retired (#81, #82). It takes
+    priority over `RXIV_EVAL_MODELS_URL` and the script appends the fixed
+    `/chat/completions` path.
+    """
+
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"GH_TOKEN": "fake-token"})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_api_base_overrides_models_url(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {"RXIV_EVAL_API_BASE": "https://api.cloudflare.com/client/v4/accounts/x/ai/v1"},
+            ),
+            patch("urllib.request.urlopen", return_value=_yes_response()) as mock_urlopen,
+        ):
+            eval_papers.gh_models_rest(
+                model="@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                system_prompt="s",
+                user_prompt="u",
+                max_tokens=4,
+            )
+        self.assertEqual(
+            mock_urlopen.call_args.args[0].full_url,
+            "https://api.cloudflare.com/client/v4/accounts/x/ai/v1/chat/completions",
+        )
+
+    def test_api_base_strips_trailing_slash(self) -> None:
+        with (
+            patch.dict(os.environ, {"RXIV_EVAL_API_BASE": "https://api.example/v1/"}),
+            patch("urllib.request.urlopen", return_value=_yes_response()) as mock_urlopen,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertEqual(
+            mock_urlopen.call_args.args[0].full_url, "https://api.example/v1/chat/completions"
+        )
+
+    def test_empty_api_base_keeps_models_url_default(self) -> None:
+        with patch("urllib.request.urlopen", return_value=_yes_response()) as mock_urlopen:
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertEqual(mock_urlopen.call_args.args[0].full_url, eval_papers.GITHUB_MODELS_URL)
+
+
+# ---------------------------------------------------------------------------
+# LlmApiKeyBearerTests
+# ---------------------------------------------------------------------------
+
+
+class LlmApiKeyBearerTests(unittest.TestCase):
+    """`RXIV_EVAL_LLM_API_KEY` (workflow secret `llm-api-key`) lets a caller
+    supply a provider-specific bearer token instead of reusing `GH_TOKEN`,
+    which authenticates the unrelated `gh api` feed fetch.
+    """
+
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"GH_TOKEN": "fake-gh-token"})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_llm_api_key_used_as_bearer_when_set(self) -> None:
+        with (
+            patch.dict(os.environ, {"RXIV_EVAL_LLM_API_KEY": "cf-api-token"}),
+            patch("urllib.request.urlopen", return_value=_yes_response()) as mock_urlopen,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        request = mock_urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer cf-api-token")
+
+    def test_falls_back_to_gh_token_when_llm_api_key_unset(self) -> None:
+        with patch("urllib.request.urlopen", return_value=_yes_response()) as mock_urlopen:
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        request = mock_urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer fake-gh-token")
+
+
+# ---------------------------------------------------------------------------
+# ClearProviderErrorTests
+# ---------------------------------------------------------------------------
+
+
+class ClearProviderErrorTests(unittest.TestCase):
+    """A retired/misconfigured OpenAI-compatible endpoint must fail with a
+    clear, token-free `RuntimeError` naming the host — never a raw
+    `JSONDecodeError`/`KeyError` escaping to crash the whole run (#81, #82).
+    """
+
+    def setUp(self) -> None:
+        self._env = patch.dict(
+            os.environ,
+            {"GH_TOKEN": "super-secret-token", "RXIV_EVAL_RETRY_BASE_SECS": "0.01"},
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_empty_response_body_raises_clear_runtime_error(self) -> None:
+        with (
+            patch("urllib.request.urlopen", return_value=io.BytesIO(b"")),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertIn("models.github.ai", str(ctx.exception))
+
+    def test_non_json_response_body_raises_clear_runtime_error(self) -> None:
+        with (
+            patch("urllib.request.urlopen", return_value=io.BytesIO(b"<html>Gone</html>")),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertIn("models.github.ai", str(ctx.exception))
+
+    def test_response_missing_choices_raises_clear_runtime_error(self) -> None:
+        with (
+            patch("urllib.request.urlopen", return_value=_fake_response({"error": "nope"})),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertIn("models.github.ai", str(ctx.exception))
+
+    def test_error_message_never_contains_bearer_token(self) -> None:
+        with (
+            patch("urllib.request.urlopen", return_value=io.BytesIO(b"not json")),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertNotIn("super-secret-token", str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
+# PermanentHttpErrorTests
+# ---------------------------------------------------------------------------
+
+
+class PermanentHttpErrorTests(unittest.TestCase):
+    """410 (Gone), 401, and 403 are permanent provider/credential failures —
+    GitHub Models' 2026-07-30 retirement surfaces as 410. They must not be
+    retried and the message must say so, distinct from a transient 429/5xx.
+    """
+
+    def setUp(self) -> None:
+        self._env = patch.dict(
+            os.environ,
+            {"GH_TOKEN": "super-secret-token", "RXIV_EVAL_RETRY_BASE_SECS": "0.01"},
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_410_is_not_retried_and_message_says_invalid(self) -> None:
+        with (
+            patch("urllib.request.urlopen", side_effect=_http_error(410)) as mock_open,
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertEqual(mock_open.call_count, 1)
+        msg = str(ctx.exception).lower()
+        self.assertIn("410", msg)
+        self.assertIn("invalid", msg)
+
+    def test_401_is_not_retried(self) -> None:
+        with (
+            patch("urllib.request.urlopen", side_effect=_http_error(401)) as mock_open,
+            self.assertRaises(RuntimeError),
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertEqual(mock_open.call_count, 1)
+
+    def test_403_is_not_retried(self) -> None:
+        with (
+            patch("urllib.request.urlopen", side_effect=_http_error(403)) as mock_open,
+            self.assertRaises(RuntimeError),
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertEqual(mock_open.call_count, 1)
+
+    def test_error_message_names_host(self) -> None:
+        with (
+            patch("urllib.request.urlopen", side_effect=_http_error(410)),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            eval_papers.gh_models_rest(
+                model="m", system_prompt="s", user_prompt="u", max_tokens=4
+            )
+        self.assertIn("models.github.ai", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
