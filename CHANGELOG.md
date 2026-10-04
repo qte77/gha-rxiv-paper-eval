@@ -6,6 +6,41 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- **OpenAI-compatible provider migration (`api_base` / `llm-api-key`).**
+  GitHub Models was fully retired 2026-07-30; every live eval run hit the
+  dead endpoint (HTTP 410, or a raw `JSONDecodeError` on an empty brownout
+  body). New workflow input `api_base` (OpenAI-compatible base URL; the
+  script appends `/chat/completions`) and secret `llm-api-key` (bearer
+  token, falls back to `GITHUB_TOKEN`/`models-token`) let consumers point
+  at Cloudflare Workers AI, OpenRouter, Cerebras, or any other OpenAI-
+  compatible provider. `RXIV_EVAL_MODELS_URL` / `models-token` remain for
+  backward compatibility; `api_base` takes priority when set. New
+  `Settings` fields `api_base`/`llm_api_key`, helpers
+  `_resolve_models_url`/`_resolve_bearer_token`. Closes #81.
+
+### Fixed
+- **Clear errors instead of a raw `JSONDecodeError`/`KeyError` crash.** An
+  empty or non-JSON response body, or a response missing
+  `choices[0].message.content`, now raises a `RuntimeError` naming the
+  endpoint host and a body snippet (never the bearer token) via the new
+  `_parse_chat_completion` helper — the pre-fix symptom on GitHub Models'
+  retirement brownout. HTTP 410/401/403/404 get an explicit "not retrying,
+  endpoint or credential invalid" message via the new `_http_error_message`
+  helper (extracted from `_attempt` to keep it under the complexity gate);
+  429/5xx retry behavior is unchanged. Closes #82.
+
+### Docs
+- `README.md`'s minimum-viable caller + `Auth` section now show a
+  Cloudflare Workers AI example and drop the now-inert
+  `permissions: models: read`. `docs/design.md`'s inputs table, environment
+  knobs, secrets, and roadmap updated for the new provider contract.
+  `docs/llm-providers.md` marked superseded by #81 (preserved as historical
+  comparison research). `models-token`'s description corrected: it covers
+  the `gh api` feed-CSV fetch only, not the LLM provider.
+- Dropped `permissions: models: read` from `eval-papers.yaml` (dead weight
+  per the owner's #81 decision).
+
 ## [0.4.0] - 2026-06-27
 
 ### Added

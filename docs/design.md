@@ -61,8 +61,10 @@ producer CSV ─► fetch ─► category pre-filter ─► LLM YES/NO ─► LL
    overlap on title+category+abstract and keeps only the top N — picking
    high-signal papers to stay under a provider's daily quota (#7) rather than
    the alphabetically-first N. Both are stdlib-only, deterministic, and free.
-4. **Relevance filter.** `POST https://models.github.ai/inference/chat/completions`
-   with `temperature=0`, `max_tokens=4`, one paper at a time. The user message
+4. **Relevance filter.** `POST {api_base}/chat/completions` (an OpenAI-
+   compatible endpoint; `api_base` defaults to GitHub Models' now-retired
+   URL — see [`docs/llm-providers.md`](llm-providers.md)) with
+   `temperature=0`, `max_tokens=4`, one paper at a time. The user message
    carries `Title`, `Category`, and `Abstract` (the abstract is sourced from
    the producer CSV's `Abstract` column — no per-paper remote fetch since
    v0.3.0). The system prompt is `DEFAULT_RELEVANCE_PROMPT` with `{topic}`
@@ -90,7 +92,8 @@ for the authoritative list. Highlights:
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
 | `max_papers` | 0 | 0 = no cap. Truncates in CSV order. |
 | `max_llm_calls` | 0 | 0 = no cap. Ranks survivors by topic-keyword overlap (title+category+abstract) and sends only the top N to the LLM — quota-friendly alternative to `max_papers` (#7). |
-| `model` | `openai/gpt-4o-mini` | Any GitHub Models–supported id. |
+| `model` | `openai/gpt-4o-mini` | Model id in whatever form the `api_base` provider expects. GitHub Models (the default's origin) is retired — the default is a historical no-op unless `api_base` is also set. |
+| `api_base` | "" | OpenAI-compatible base URL (no path); the script POSTs to `{api_base}/chat/completions`. Empty falls back to GitHub Models' retired endpoint. Pair with the `llm-api-key` secret. |
 | `enrich` | `true` | Toggles the structured-extraction pass (operates on the CSV-supplied abstract). |
 | `relevance_prompt` / `extraction_prompt` | "" | Override the defaults. |
 | `eval_repo` | `qte77/gha-rxiv-paper-eval` | Owner/repo hosting the reusable workflow's source. Fork users override. |
@@ -119,21 +122,33 @@ Environment knobs (`RXIV_EVAL_*`):
 - `LLM_CALL_INTERVAL_SECS` (default `1.5`) — steady-state gap between
   successive relevance calls. Per-call retry alone cannot rescue a burst that
   trips a per-minute rate ceiling; this throttle prevents the burst.
-- `MODELS_URL` — override the chat-completions endpoint (default GitHub
-  Models). Accepts any OpenAI-compatible URL.
+- `MODELS_URL` — override the whole chat-completions endpoint URL (default
+  GitHub Models, retired 2026-07-30). Kept for backward compatibility;
+  `API_BASE` (below) is preferred for new setups and takes priority when
+  both are set.
+- `API_BASE` *(since the GitHub Models migration, #81/#82)* — OpenAI-
+  compatible base URL (no path); the script appends `/chat/completions`.
+  Workflow input: `api_base`.
+- `LLM_API_KEY` *(since the GitHub Models migration, #81/#82)* — bearer
+  token for the LLM endpoint. Falls back to `GH_TOKEN` when unset (works
+  only against GitHub Models' now-retired endpoint). Workflow secret:
+  `llm-api-key`.
 - `OFFLINE` / `STUB_MODE` — stub the LLM in tests (`yes` / `no` / `hash` /
   `flaky`).
 
 Secrets:
 
-- `models-token` *(optional, since v0.2.2)* — fine-grained PAT with
-  `models: read`. The workflow uses
-  `secrets.models-token || secrets.GITHUB_TOKEN` for both the `gh api` feed
-  fetch and the GitHub Models REST POST. `GITHUB_TOKEN` with
-  `permissions: models: read` is sufficient for typical weekly batches;
+- `llm-api-key` *(since the GitHub Models migration, #81/#82)* — bearer
+  token for the OpenAI-compatible provider named by `api_base` (e.g. a
+  Cloudflare Workers AI API token). Falls back to `models-token`/
+  `GITHUB_TOKEN` when absent, which only works against GitHub Models' now-
+  retired endpoint — set it for any live run against a real provider.
+- `models-token` *(optional, since v0.2.2)* — fine-grained PAT covering the
+  `gh api` feed-CSV fetch only (unrelated to the LLM provider since the
+  migration). `GITHUB_TOKEN` with `permissions: contents: read` is
+  sufficient for typical weekly batches against the public feed repo;
   supply a fine-grained PAT only if you observe quota-related HTTP 429s in
-  practice. Consumers still declare `permissions: models: read` so the
-  fallback path works when no PAT is configured.
+  practice.
 
 ## Determinism
 
@@ -216,6 +231,15 @@ Bandit B310 suppression site.
   title+category+abstract and sends only the top N to the LLM, so a consumer
   can stay under a provider's daily quota without picking the first N in CSV
   order. Stdlib-only, deterministic, free; `0` = no cap (unchanged behavior).
+- **OpenAI-compatible provider migration** (#81, #82). GitHub Models was
+  fully retired 2026-07-30; every live run hit the dead endpoint (HTTP 410,
+  or a `JSONDecodeError` on an empty brownout body). New `api_base` input +
+  `llm-api-key` secret point the eval at any OpenAI-compatible provider
+  (Cloudflare Workers AI, OpenRouter, Cerebras — see the README's `Auth`
+  section); `models_url`/`models-token` remain for backward compatibility.
+  410/401/403/404 now fail fast with a clear, token-free message instead of
+  retrying or crashing on a malformed body. `permissions: models: read`
+  dropped from the reusable workflow (dead weight).
 
 ### Open
 
@@ -244,6 +268,6 @@ GH_TOKEN=$(gh auth token) uv run python scripts/eval_papers.py \
   --output-dir /tmp/rxiv-eval
 ```
 
-Outputs land in `/tmp/rxiv-eval/`. The script POSTs to the GitHub Models REST
-endpoint directly (`https://models.github.ai/inference/chat/completions`); no
-`gh` extension is required.
+Outputs land in `/tmp/rxiv-eval/`. The script POSTs directly to an OpenAI-
+compatible chat-completions endpoint (`api_base`, or the retired GitHub
+Models URL by default); no `gh` extension is required.
