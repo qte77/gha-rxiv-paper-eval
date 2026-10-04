@@ -6,6 +6,8 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-04
+
 ### Added
 - **OpenAI-compatible provider migration (`api_base` / `llm-api-key`).**
   GitHub Models was fully retired 2026-07-30; every live eval run hit the
