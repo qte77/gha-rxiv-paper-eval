@@ -1,5 +1,11 @@
 # LLM provider research
 
+> **Superseded by #81.** GitHub Models was fully retired 2026-07-30; the
+> "stay on GitHub Models" recommendation below no longer applies. Current
+> contract: [`docs/design.md`](design.md) (`api_base` / `llm-api-key`).
+> Owner's provider decision: issue #81's 2026-09-29 comment. Preserved here
+> for the comparison research, not as current guidance.
+
 Captured 2026-05-08. Question: should we stay on **GitHub Models** for the
 relevance + extraction calls, or move to an alternative free / freemium
 provider? Answer: **stay on GitHub Models**, with **Google AI Studio (Gemini

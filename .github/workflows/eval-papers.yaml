@@ -35,9 +35,27 @@ on:
         type: number
         default: 0
       model:
-        description: "GitHub Models model id used for both relevance and extraction."
+        description: >-
+          Model id used for both relevance and extraction, in whatever form
+          the target provider expects (e.g. a Cloudflare Workers AI id like
+          `@cf/meta/llama-3.3-70b-instruct-fp8-fast`). GitHub Models is
+          retired (2026-07-30); the `openai/...` default is a historical
+          no-op unless `api_base` is also set.
         type: string
         default: openai/gpt-4o-mini
+      api_base:
+        description: >-
+          OpenAI-compatible chat-completions base URL (no path), e.g.
+          Cloudflare Workers AI's
+          `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`,
+          OpenRouter's `https://openrouter.ai/api/v1`, or Cerebras's
+          `https://api.cerebras.ai/v1`. The script appends
+          `/chat/completions`. Empty (default) falls back to GitHub Models'
+          now-retired endpoint — set this for any live run. Pair with the
+          `llm-api-key` secret.
+        type: string
+        required: false
+        default: ""
       enrich:
         description: "If true, run the structured-extraction prompt on the producer CSV's `Abstract` column for each YES verdict."
         type: boolean
@@ -81,11 +99,20 @@ on:
     secrets:
       models-token:
         description: >-
-          Optional override for the auto-provided GITHUB_TOKEN. Use if
-          you observe GitHub Models quota issues (HTTP 429) in practice.
-          Falls back to GITHUB_TOKEN when absent; GITHUB_TOKEN with
-          `permissions: models: read` is sufficient for typical weekly
-          batches.
+          Optional override for the auto-provided GITHUB_TOKEN used for the
+          `gh api` feed-CSV fetch (unrelated to the LLM provider). Falls
+          back to GITHUB_TOKEN when absent, which is sufficient for typical
+          weekly batches against the public feed repo. Historically also
+          doubled as the GitHub Models bearer token, but GitHub Models is
+          retired — use `llm-api-key` for the LLM provider instead.
+        required: false
+      llm-api-key:
+        description: >-
+          Bearer token for the OpenAI-compatible provider named by
+          `api_base` (e.g. a Cloudflare Workers AI API token). Falls back
+          to GITHUB_TOKEN/`models-token` when absent, which only works
+          against GitHub Models' now-retired endpoint — set this for any
+          live run against a real provider.
         required: false
     outputs:
       relevant_count:
@@ -97,7 +124,6 @@ on:
 
 permissions:
   contents: read
-  models: read
 
 jobs:
   evaluate:
@@ -133,10 +159,9 @@ jobs:
       - name: Run evaluation
         id: run
         env:
-          # Used for both `gh api` (feed fetch) and the GitHub Models REST
-          # POST. Optional: pass secrets.models-token (fine-grained PAT with
-          # `models: read`) if you hit quota issues. GITHUB_TOKEN with
-          # `permissions: models: read` is sufficient for typical weekly batches.
+          # Feed-CSV `gh api` fetch only — unrelated to the LLM provider.
+          # Optional: pass secrets.models-token (fine-grained PAT) if you hit
+          # quota issues against the (public) feed repo.
           GH_TOKEN: ${{ secrets.models-token || secrets.GITHUB_TOKEN }}
           INPUT_TOPIC: ${{ inputs.topic }}
           INPUT_SERVER: ${{ inputs.server }}
@@ -150,6 +175,8 @@ jobs:
           INPUT_FEED_REPO: ${{ inputs.feed_repo }}
           RELEVANCE_PROMPT: ${{ inputs.relevance_prompt }}
           EXTRACTION_PROMPT: ${{ inputs.extraction_prompt }}
+          INPUT_API_BASE: ${{ inputs.api_base }}
+          INPUT_LLM_API_KEY: ${{ secrets.llm-api-key }}
         run: |
           set -euo pipefail
           feed_repo="${INPUT_FEED_REPO:-${GITHUB_REPOSITORY_OWNER}/gha-rxiv-feed-action}"
@@ -166,6 +193,11 @@ jobs:
           [[ -n "$INPUT_WEEK" ]] && args+=(--week "$INPUT_WEEK")
           [[ -n "$INPUT_CATEGORIES" ]] && args+=(--categories "$INPUT_CATEGORIES")
           [[ "$INPUT_ENRICH" == "true" ]] && args+=(--enrich)
+          # Only export when non-empty — an empty env var is harmless to the
+          # script's own falsy check, but omitting it keeps the subprocess
+          # environment honest about what was actually configured.
+          [[ -n "$INPUT_API_BASE" ]] && export RXIV_EVAL_API_BASE="$INPUT_API_BASE"
+          [[ -n "$INPUT_LLM_API_KEY" ]] && export RXIV_EVAL_LLM_API_KEY="$INPUT_LLM_API_KEY"
 
           uv run --no-dev python scripts/eval_papers.py "${args[@]}"
           cat output/.workflow_outputs >> "$GITHUB_OUTPUT"

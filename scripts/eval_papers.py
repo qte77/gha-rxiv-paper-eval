@@ -12,8 +12,12 @@ Pipeline:
 
 Designed to be invoked from .github/workflows/eval-papers.yaml.
 External services: `gh` CLI for the feed-CSV fetch (uses GH_TOKEN), and a
-direct HTTPS POST to https://models.github.ai/inference/chat/completions for
-inference (also uses GH_TOKEN; requires the `models: read` scope).
+direct HTTPS POST to an OpenAI-compatible chat-completions endpoint for
+inference. GitHub Models (the historical default) was fully retired on
+2026-07-30 (see docs/llm-providers.md); callers now point `api_base` /
+`RXIV_EVAL_API_BASE` at any OpenAI-compatible provider (Cloudflare Workers
+AI, OpenRouter, Cerebras, ...) with `llm-api-key` / `RXIV_EVAL_LLM_API_KEY`
+as the bearer token (falls back to GH_TOKEN when unset).
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -90,8 +95,15 @@ DEFAULT_TOPIC = (
     "and tool-augmented LLM workflows"
 )
 
+# Retired 2026-07-30 (see docs/llm-providers.md); kept as the historical
+# default for `Settings.models_url` so existing RXIV_EVAL_MODELS_URL
+# overrides keep working. New callers should set `api_base` instead.
 GITHUB_MODELS_URL = "https://models.github.ai/inference/chat/completions"
 RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+# Permanent provider/credential failures — retrying cannot fix these.
+# 410 is how GitHub Models' 2026-07-30 retirement surfaces; 401/403 are a
+# bad/missing key; 404 is typically a mistyped `api_base`.
+_PERMANENT_HTTP_CODES = {401, 403, 404, 410}
 
 # First gha-rxiv-feed-action release that emits the `Abstract` column on all
 # three servers (arxiv 9-col, bio/med 8-col). Older producer outputs lack
@@ -132,11 +144,21 @@ class Settings(BaseSettings):
     # is roughly 10-20 req/min; per-call retry can mask short bursts but the
     # honest fix is steady-state throttling. Set to 0 in tests.
     llm_call_interval_secs: float = 1.5
-    # OpenAI-compatible chat-completions endpoint. Defaults to GitHub Models;
-    # override via RXIV_EVAL_MODELS_URL to point at Azure OpenAI, a local
-    # vLLM/Ollama, an OpenAI-compatible proxy, etc. Caller still supplies the
-    # bearer token via GH_TOKEN.
+    # Whole chat-completions endpoint URL. Defaults to GitHub Models
+    # (retired 2026-07-30 — see docs/llm-providers.md); kept for backward
+    # compatibility with existing RXIV_EVAL_MODELS_URL overrides. Prefer
+    # `api_base` for new setups — it takes priority when both are set.
     models_url: str = GITHUB_MODELS_URL
+    # OpenAI-compatible base URL (no path), e.g. Cloudflare Workers AI's
+    # `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`, OpenRouter's
+    # `https://openrouter.ai/api/v1`, or Cerebras's `https://api.cerebras.ai/v1`.
+    # The script appends `/chat/completions`. Empty (default) = fall back to
+    # `models_url`. Workflow input: `api_base`.
+    api_base: str = ""
+    # Bearer token for the LLM endpoint. Empty (default) = fall back to
+    # GH_TOKEN (which also authenticates the unrelated `gh api` feed fetch).
+    # Workflow secret: `llm-api-key`.
+    llm_api_key: str = ""
 
 
 class Paper(BaseModel):
@@ -410,6 +432,29 @@ def _cache_save(output_dir: Path, verdict: Verdict) -> None:
 T = TypeVar("T")
 
 
+def _url_host(url: str) -> str:
+    """Return the host:port component of ``url`` (for token-free error text)."""
+    return urllib.parse.urlsplit(url).netloc
+
+
+def _http_error_message(exc: urllib.error.HTTPError) -> str:
+    """Build a clear, token-free message for a non-retryable HTTPError.
+
+    410/401/403/404 (`_PERMANENT_HTTP_CODES`) get an explicit "won't retry"
+    framing — 410 is how GitHub Models' 2026-07-30 retirement surfaces, and
+    401/403/404 usually mean a bad `llm-api-key` or mistyped `api_base`.
+    """
+    host = _url_host(exc.url) if exc.url else "?"
+    detail = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+    detail = detail.strip()[:200]
+    if exc.code in _PERMANENT_HTTP_CODES:
+        return (
+            f"HTTP {exc.code} from {host}: provider endpoint or credential "
+            f"appears invalid (not retrying). {detail}"
+        ).strip()
+    return f"HTTP {exc.code} from {host}: {detail}"
+
+
 def _attempt(call: Callable[[], T]) -> tuple[T | None, int | None, str | None]:
     """Run ``call`` once.
 
@@ -420,10 +465,7 @@ def _attempt(call: Callable[[], T]) -> tuple[T | None, int | None, str | None]:
         return call(), None, None
     except urllib.error.HTTPError as exc:
         if exc.code not in RETRYABLE_HTTP_CODES:
-            detail = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-            raise RuntimeError(
-                f"HTTP {exc.code}: {detail.strip()}"
-            ) from exc
+            raise RuntimeError(_http_error_message(exc)) from exc
         return None, exc.code, f"HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError) as exc:
         return None, None, f"network error: {exc}"
@@ -447,7 +489,59 @@ def _with_retry(call: Callable[[], T], settings: Settings) -> T:
     )
 
 
+def _resolve_models_url(settings: Settings) -> str:
+    """Return the chat-completions endpoint to POST to.
+
+    `api_base` (an OpenAI-compatible base URL, no path) takes priority when
+    set — the endpoint is `{api_base}/chat/completions`. Falls back to
+    `models_url` (a whole endpoint URL, default GitHub Models) so existing
+    `RXIV_EVAL_MODELS_URL` overrides keep working.
+    """
+    if settings.api_base:
+        return f"{settings.api_base.rstrip('/')}/chat/completions"
+    return settings.models_url
+
+
+def _resolve_bearer_token(settings: Settings) -> str:
+    """Return the bearer token for the LLM endpoint.
+
+    `llm_api_key` takes priority when set (a provider-specific token, e.g.
+    Cloudflare Workers AI); falls back to `GH_TOKEN`, which the feed-CSV
+    `gh api` fetch always uses regardless of the LLM provider.
+    """
+    return settings.llm_api_key or os.environ["GH_TOKEN"]
+
+
+def _parse_chat_completion(raw: bytes, url: str) -> str:
+    """Parse a chat-completions response body and return the assistant text.
+
+    Raises a clear, token-free `RuntimeError` naming the endpoint host on
+    any shape a misconfigured or outage-mode provider might return — an
+    empty body, non-JSON, or JSON missing `choices[0].message.content` —
+    instead of letting a raw `JSONDecodeError`/`KeyError` escape and crash
+    the whole run (#81, #82: this is exactly how GitHub Models' retirement
+    brownout surfaced before the endpoint returned a hard 410).
+    """
+    host = _url_host(url)
+    text = raw.decode("utf-8", errors="replace")
+    if not text.strip():
+        raise RuntimeError(
+            f"Empty response body from {host} (endpoint retired or misconfigured?)"
+        )
+    try:
+        body = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Non-JSON response from {host}: {text[:200]!r}") from exc
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        snippet = json.dumps(body)[:200]
+        raise RuntimeError(f"Unexpected response shape from {host}: {snippet}") from exc
+
+
 def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    settings = Settings()
+    url = _resolve_models_url(settings)
     payload = json.dumps(
         {
             "model": model,
@@ -459,19 +553,17 @@ def _github_models_call(model: str, system_prompt: str, user_prompt: str, max_to
             ],
         }
     ).encode("utf-8")
-    body = json.loads(
-        _urlopen_bytes(
-            Settings().models_url,
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            method="POST",
-        )
+    raw = _urlopen_bytes(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {_resolve_bearer_token(settings)}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
     )
-    return body["choices"][0]["message"]["content"]
+    return _parse_chat_completion(raw, url)
 
 
 def gh_models_rest(model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> str:

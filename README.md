@@ -114,8 +114,7 @@ caps LLM calls to the top-N papers by topic-keyword overlap), `model`,
 
 ```yaml
 permissions:
-  contents: read
-  models: read    # lets the auto-provided GITHUB_TOKEN call GitHub Models
+  contents: read    # `models: read` is no longer needed — GitHub Models is retired
 
 jobs:
   eval:
@@ -123,12 +122,19 @@ jobs:
     with:
       topic: "<your project's relevance criterion>"
       categories: "<comma-separated bioRxiv categories>"
+      # OpenAI-compatible provider (here: Cloudflare Workers AI). See "Auth"
+      # below for OpenRouter / Cerebras alternatives.
+      api_base: "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1"
+      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       # eval_ref MUST match the `uses: @<ref>` pin above. A reusable
       # workflow cannot reliably introspect its own ref at runtime.
       eval_ref: v0.4.0
       # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users set
       # `eval_repo: <their-org>/gha-rxiv-paper-eval`.
       # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
+    secrets:
+      # Workers AI API token (create one scoped to "Workers AI").
+      llm-api-key: ${{ secrets.CF_WORKERS_AI_TOKEN }}
 ```
 
 To wire `topic` / `categories` (and similar) from GitHub Actions
@@ -168,14 +174,29 @@ for a full eval + triage pairing.
 
 ## Auth
 
-The `permissions: models: read` declaration on the caller authorizes the
-auto-provided `GITHUB_TOKEN` to call GitHub Models, and covers the public-repo
-`gh api` feed fetch performed against the upstream feed-action's data repo.
-No additional secret wiring is required for typical weekly batches.
+GitHub Models — this workflow's original LLM provider — was fully retired
+on 2026-07-30. `permissions: models: read` no longer does anything; drop it
+from the caller (as in the example above).
 
-If you ever need to override the token (e.g. to use a fine-grained PAT with
-broader scopes), the workflow accepts an optional `models-token` secret and
-falls back to `GITHUB_TOKEN` when it's absent.
+Point the eval at any OpenAI-compatible chat-completions provider via the
+`api_base` input + `llm-api-key` secret:
+
+| Provider | `api_base` | `model` example |
+| --- | --- | --- |
+| Cloudflare Workers AI | `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
+| OpenRouter | `https://openrouter.ai/api/v1` | any model id it serves |
+| Cerebras | `https://api.cerebras.ai/v1` | a Cerebras-hosted Llama id |
+
+`llm-api-key` falls back to `models-token`/`GITHUB_TOKEN` when unset, which
+only works against GitHub Models' now-retired endpoint — set `llm-api-key`
+for any live run against a real provider. See
+[`docs/llm-providers.md`](docs/llm-providers.md) for the superseded research
+and [`docs/design.md`](docs/design.md) for the full contract.
+
+The unrelated `gh api` feed-CSV fetch (against the public feed-action data
+repo) still authenticates with the auto-provided `GITHUB_TOKEN`
+(`permissions: contents: read` is enough); pass `models-token` only if you
+need to override that with a fine-grained PAT.
 
 For local runs the script reads `GH_TOKEN` from the environment — `gh auth
 token` provides one with both `gh api` and (depending on your account's
