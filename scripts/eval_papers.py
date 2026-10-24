@@ -174,6 +174,14 @@ class Paper(BaseModel):
     authors: str = Field(alias="Authors")
     abstract: str = Field(default="", alias="Abstract")
 
+    @property
+    def id(self) -> str:
+        """Paper identifier (DOI for bio servers, arxiv id for arxiv).
+
+        `doi` stays the canonical field so CSV/JSONL keys are unchanged.
+        """
+        return self.doi
+
 
 class ArxivCsvRow(BaseModel):
     """Raw row of the arxiv producer CSV (`data/arxiv/<year>/<week>.csv`).
@@ -218,6 +226,11 @@ class Verdict(BaseModel):
     doi: str
     relevant: bool
     raw: str
+
+    @property
+    def id(self) -> str:
+        """Paper identifier; alias of `doi` (see `Paper.id`)."""
+        return self.doi
 
 
 class ExtractedFields(BaseModel):

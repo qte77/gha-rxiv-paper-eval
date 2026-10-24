@@ -6,6 +6,11 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- **`Paper.id` / `Verdict.id` read-only aliases for `.doi` (#39).** arxiv ids
+  are not DOIs, so code can use the neutral `.id`; `doi` stays the canonical
+  field, so CSV columns, `extracts.jsonl` keys and cache payloads are unchanged.
+
 ### Changed
 - **`relevance_prompt` input renamed to `relevance_prompt_template` (#64).** The
   value has always been a `{topic}` template, not the final prompt. The old
