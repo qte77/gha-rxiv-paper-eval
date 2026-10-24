@@ -11,6 +11,13 @@ entries are PR-scoped.
   are not DOIs, so code can use the neutral `.id`; `doi` stays the canonical
   field, so CSV columns, `extracts.jsonl` keys and cache payloads are unchanged.
 
+### Changed
+- **README follows the qte77 doc-structure canon (#70).** Hero, badges
+  (Version, CodeFactor, CI), What, How, Why, Refs. Local runs, the caller and
+  triage YAML, the dispatch CLI and provider auth moved to `docs/usage.md`
+  (now bumped by `bump-my-version`). License section/badge pending a licence
+  choice.
+
 ## [0.5.1] - 2026-10-24
 
 ### Fixed
