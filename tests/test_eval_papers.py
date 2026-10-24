@@ -1106,10 +1106,12 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
         self.addCleanup(self._env.stop)
 
     def _run_main_with_fixture(
-        self, num_papers: int, num_failures: int
+        self, num_papers: int, num_failures: int, max_llm_calls: int = 0,
+        summary: dict | None = None,
     ) -> int:
         """Run `main()` against an inline `num_papers`-row feed, with
         `is_relevant` raising on the first `num_failures` papers.
+        `summary["text"]` receives `summary.md` when a dict is passed.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             out = pathlib.Path(tmpdir)
@@ -1136,12 +1138,16 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
                     "--max-papers", "0",
                     "--week", "15",  # explicit -> skip live feed discovery
                     "--output-dir", str(out),
+                    "--max-llm-calls", str(max_llm_calls),
                 ]
                 with (
                     patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed),
                     patch.object(eval_papers, "is_relevant", side_effect=fake_is_relevant),
                 ):
-                    return eval_papers.main()
+                    rc = eval_papers.main()
+                if summary is not None:
+                    summary["text"] = (out / "summary.md").read_text()
+                return rc
             finally:
                 sys.argv = saved_argv
 
@@ -1158,6 +1164,22 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
     def test_returns_zero_on_zero_papers(self) -> None:
         # empty feed after prefilter -> must not raise ZeroDivisionError
         rc = self._run_main_with_fixture(num_papers=0, num_failures=0)
+        self.assertEqual(rc, 0)
+
+    def test_all_calls_failed_under_keyword_cap_returns_nonzero(self) -> None:
+        # W42 shape: 3065 papers, --max-llm-calls 100, all 100 calls 401 ->
+        # 100/3065 ≈ 3 % against the category count, so the run went green.
+        # The rate must be measured against the calls actually made: 4/4.
+        summary: dict = {}
+        rc = self._run_main_with_fixture(
+            num_papers=10, num_failures=4, max_llm_calls=4, summary=summary
+        )
+        self.assertEqual(rc, 2)
+        self.assertIn("LLM call failures: 4 / 4 (100 %)", summary["text"])
+
+    def test_minority_failures_under_keyword_cap_returns_zero(self) -> None:
+        # 1 of 4 capped calls failed = 25 % -> exit 0
+        rc = self._run_main_with_fixture(num_papers=10, num_failures=1, max_llm_calls=4)
         self.assertEqual(rc, 0)
 
 

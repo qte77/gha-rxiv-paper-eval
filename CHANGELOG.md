@@ -6,6 +6,14 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Fixed
+- **A run where every relevance call fails now fails the job.** The >50 %
+  failure-rate check (#6) divided by the category-filtered paper count, not by
+  the calls actually made after the `max_llm_calls` keyword cap, so a weekly
+  arXiv run with 3,065 papers and all 100 capped calls failing on HTTP 401
+  read as 3 % and exited 0 (no triage PR, green check). The exit check and the
+  `summary.md` "LLM call failures" line now use the post-cap call count.
+
 ## [0.5.0] - 2026-10-04
 
 ### Added
