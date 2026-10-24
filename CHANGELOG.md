@@ -6,6 +6,11 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- **`Paper.id` / `Verdict.id` read-only aliases for `.doi` (#39).** arxiv ids
+  are not DOIs, so code can use the neutral `.id`; `doi` stays the canonical
+  field, so CSV columns, `extracts.jsonl` keys and cache payloads are unchanged.
+
 ### Fixed
 - **`eval-papers.yaml` no longer passes `--max-llm-calls 0` unconditionally
   (#80).** The flag is only added when `max_llm_calls` is non-zero (0 is the

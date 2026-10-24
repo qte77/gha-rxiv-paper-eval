@@ -48,6 +48,14 @@ def test_paper_accepts_python_attribute_names() -> None:
     assert paper.iso_week == "15"
 
 
+def test_paper_id_aliases_doi_without_changing_dump() -> None:
+    # arxiv ids are not DOIs: `.id` is the neutral name, `.doi` stays canonical
+    # so CSV/JSONL keys are unchanged (#39).
+    paper = Paper.model_validate(_CSV_ROW)
+    assert paper.id == paper.doi
+    assert "id" not in paper.model_dump()
+
+
 def test_paper_missing_field_raises() -> None:
     bad = dict(_CSV_ROW)
     del bad["DOI"]
@@ -158,6 +166,11 @@ def test_verdict_serializes_to_dict() -> None:
     v = Verdict(doi="10.1101/x", relevant=False, raw="NO")
     payload = v.model_dump()
     assert payload == {"doi": "10.1101/x", "relevant": False, "raw": "NO"}
+
+
+def test_verdict_id_aliases_doi() -> None:
+    v = Verdict(doi="2406.09418", relevant=True, raw="YES")
+    assert v.id == "2406.09418"
 
 
 def test_verdict_roundtrip_through_json() -> None:
