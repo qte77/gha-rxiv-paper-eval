@@ -185,9 +185,11 @@ jobs:
             --server "$INPUT_SERVER"
             --model "$INPUT_MODEL"
             --max-papers "$INPUT_MAX_PAPERS"
-            --max-llm-calls "$INPUT_MAX_LLM_CALLS"
             --output-dir output
           )
+          # 0 = no cap, the script's own default. Omitting the flag keeps
+          # older `eval_ref` pins (pre---max-llm-calls) working (#80).
+          [[ "$INPUT_MAX_LLM_CALLS" != "0" ]] && args+=(--max-llm-calls "$INPUT_MAX_LLM_CALLS")
           [[ -n "$INPUT_TOPIC" ]] && args+=(--topic "$INPUT_TOPIC")
           [[ -n "$INPUT_YEAR" ]] && args+=(--year "$INPUT_YEAR")
           [[ -n "$INPUT_WEEK" ]] && args+=(--week "$INPUT_WEEK")

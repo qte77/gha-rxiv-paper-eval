@@ -6,6 +6,12 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Fixed
+- **`eval-papers.yaml` no longer passes `--max-llm-calls 0` unconditionally
+  (#80).** The flag is only added when `max_llm_calls` is non-zero (0 is the
+  script's own "no cap" default), so callers whose `eval_ref` predates the
+  flag no longer exit 2 on `unrecognized arguments`.
+
 ## [0.5.1] - 2026-10-24
 
 ### Fixed
