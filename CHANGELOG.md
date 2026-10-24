@@ -6,6 +6,8 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-24
+
 ### Fixed
 - **A run where every relevance call fails now fails the job.** The >50 %
   failure-rate check (#6) divided by the category-filtered paper count, not by
