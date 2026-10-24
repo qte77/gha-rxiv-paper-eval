@@ -1,218 +1,59 @@
 # gha-rxiv-paper-eval
 
-Reusable GitHub Actions workflow that consumes the weekly preprint CSV emitted
-by a sibling [`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action)
-producer, runs a topic-focused relevance filter through
-[GitHub Models](https://docs.github.com/en/github-models), and (optionally)
-enriches each hit with the abstract + a structured extraction.
+> Reusable GitHub Actions workflow that filters a weekly bioRxiv / medRxiv /
+> arXiv preprint feed to your topic with an LLM and extracts structured
+> findings from each hit. Prototype.
 
-> **Status:** prototype. See [`docs/design.md`](docs/design.md) for the full
-> contract, architecture, and roadmap.
+[![Version](https://img.shields.io/badge/version-v0.5.1-blue)](CHANGELOG.md)
+[![CodeFactor](https://www.codefactor.io/repository/github/qte77/gha-rxiv-paper-eval/badge)](https://www.codefactor.io/repository/github/qte77/gha-rxiv-paper-eval)
+[![CI](https://github.com/qte77/gha-rxiv-paper-eval/actions/workflows/ci.yaml/badge.svg)](https://github.com/qte77/gha-rxiv-paper-eval/actions/workflows/ci.yaml)
 
-## Who this is for
+## What
 
-- **Research-group maintainers** who want a weekly digest of bioRxiv /
-  medRxiv / arXiv preprints filtered to their lab's topic, dropped into
-  GitHub Issues by a downstream triage job — without writing any LLM glue.
-- **Multi-repo orgs** running the same eval policy across several consumer
-  repos: pin one tag, propagate prompt + model + retry changes by version
-  bump rather than copy-paste.
-- **Methodology-focused readers** who want methods/findings/study-type
-  extracted into structured JSON for downstream pipelines (dashboards,
-  spreadsheets, secondary LLM steps).
+- Reads the weekly CSV published by
+  [`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action) —
+  no scraping, no per-paper fetches.
+- Judges each paper against a free-text topic with any OpenAI-compatible LLM
+  provider (Cloudflare Workers AI, OpenRouter, Cerebras, …).
+- Optional category allowlist and keyword-ranked LLM-call cap keep runs inside
+  provider quotas.
+- Extracts methods / findings / study type of each hit into `extracts.jsonl`
+  for dashboards, spreadsheets or a second LLM step.
+- Uploads `relevant.csv`, `extracts.jsonl` and `summary.md` as a build artifact.
+- Optional follow-on workflow opens one GitHub issue per relevant paper.
 
-## Run it locally
+## How
 
-The script is runnable standalone via `uv`. The `Makefile` wraps the common
-recipes; `make help` lists them all.
-
-```bash
-# One-time
-make sync                       # uv sync (project + dev)
-
-# Quality gates (matches CI)
-make validate                   # lint + complexity + test
-make test                       # or individually
-make lint
-make complexity
-
-# End-to-end smoke against real arxiv (uses your `gh auth token`)
-make smoke SERVER=arxiv YEAR=2024 WEEK=24 MAX=5
-
-# Other servers / weeks / output dirs
-make smoke SERVER=biorxiv YEAR=2026 WEEK=18 MAX=10 OUT=/tmp/biorxiv-test
-```
-
-Outputs land in `$OUT/` (default `/tmp/rxiv-eval/`): `relevant.csv`,
-`extracts.jsonl`, `summary.md`, and `feed.csv` (raw producer CSV).
-
-<details>
-<summary>Offline smoke (stubbed LLM, no Models call)</summary>
-
-```bash
-RXIV_EVAL_OFFLINE=1 RXIV_EVAL_STUB_MODE=yes \
-  make smoke SERVER=arxiv YEAR=2024 WEEK=24
-```
-
-`RXIV_EVAL_STUB_MODE` accepts `yes`/`no`/`hash`/`flaky` to control the stub's
-verdict. Abstracts are sourced from the producer CSV's `Abstract` column;
-offline mode skips only the Models REST call.
-
-</details>
-
-<details>
-<summary>Raw invocation (no Makefile)</summary>
-
-```bash
-GH_TOKEN=$(gh auth token) uv run python scripts/eval_papers.py \
-  --feed-repo <owner>/gha-rxiv-feed-action \
-  --server biorxiv \
-  --topic "<your topic>" \
-  --categories "<your categories>" \
-  --max-papers 5 \
-  --enrich \
-  --output-dir /tmp/rxiv-eval
-```
-
-</details>
-
-## Use it as a GitHub Actions workflow
-
-In a consumer repo, add a workflow that calls this one. A working in-repo
-example is
-[`.github/workflows/eval-papers-dispatch.yaml`](.github/workflows/eval-papers-dispatch.yaml)
-— the manual dispatch wrapper this repo uses for its own smoke tests. The
-job uploads `relevant.csv`, `extracts.jsonl`, and `summary.md` as a build
-artifact for downstream jobs.
-
-<details>
-<summary>Trigger the dispatch wrapper from CLI</summary>
-
-```bash
-# Bare minimum — newest published feed week, biorxiv, max_papers=5 (dispatch default):
-gh workflow run eval-papers-dispatch.yaml
-
-# Overrides (any subset):
-gh workflow run eval-papers-dispatch.yaml \
-  -F server=biorxiv -F year=2026 -F week=20 -F max_papers=50
-
-# Watch + download artifact:
-run=$(gh run list --workflow=eval-papers-dispatch.yaml --limit 1 --json databaseId --jq '.[0].databaseId')
-gh run watch "$run" --exit-status
-gh run download "$run"
-```
-
-Inputs: `topic`, `server` (biorxiv/medrxiv/arxiv), `year`, `week`,
-`categories`, `max_papers` (0 = no cap), `max_llm_calls` (0 = no cap;
-caps LLM calls to the top-N papers by topic-keyword overlap), `model`,
-`enrich`, `feed_repo`.
-
-</details>
-
-<details>
-<summary>Minimum-viable caller</summary>
+Call the reusable workflow from a consumer repo:
 
 ```yaml
-permissions:
-  contents: read    # `models: read` is no longer needed — GitHub Models is retired
-
 jobs:
   eval:
     uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.5.1
     with:
       topic: "<your project's relevance criterion>"
-      categories: "<comma-separated bioRxiv categories>"
-      # OpenAI-compatible provider (here: Cloudflare Workers AI). See "Auth"
-      # below for OpenRouter / Cerebras alternatives.
       api_base: "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1"
       model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-      # eval_ref MUST match the `uses: @<ref>` pin above. A reusable
-      # workflow cannot reliably introspect its own ref at runtime.
-      eval_ref: v0.5.1
-      # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users set
-      # `eval_repo: <their-org>/gha-rxiv-paper-eval`.
-      # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
+      eval_ref: v0.5.1  # must match the `uses: @<ref>` pin
     secrets:
-      # Workers AI API token (create one scoped to "Workers AI").
       llm-api-key: ${{ secrets.CF_WORKERS_AI_TOKEN }}
 ```
 
-To wire `topic` / `categories` (and similar) from GitHub Actions
-repository or organization variables instead of hardcoding, see
-[`examples/consumer-eval-vars.yaml`](examples/consumer-eval-vars.yaml).
+Local runs, the triage job, provider auth and the dispatch CLI are in
+[`docs/usage.md`](docs/usage.md).
 
-</details>
+## Why
 
-<details>
-<summary>Downstream triage job (open an issue per relevant paper)</summary>
+Weekly preprint digests usually mean hand-written LLM glue copied into every
+repo that wants one. This is one reusable workflow instead: consumer repos pin
+a tag and pick up prompt, model and retry changes with a version bump, not a
+copy-paste.
 
-A second reusable workflow,
-[`triage-to-issues.yaml`](.github/workflows/triage-to-issues.yaml), downloads
-the eval artifact and opens one GitHub issue per row of `extracts.jsonl`. Add
-it as a follow-on job in the same consumer workflow:
+## Refs
 
-```yaml
-  triage:
-    needs: eval
-    if: ${{ fromJSON(needs.eval.outputs.relevant_count) > 0 }}
-    uses: qte77/gha-rxiv-paper-eval/.github/workflows/triage-to-issues.yaml@v0.5.1
-    with:
-      artifact_name: ${{ needs.eval.outputs.artifact_name }}
-      # eval_ref MUST match the `uses: @<ref>` pin on this line.
-      eval_ref: v0.5.1
-      # Optional: label (default "rxiv-feed"), title_prefix (default "rxiv:").
-    permissions:
-      contents: read
-      issues: write
-```
-
-The caller needs `issues: write` (granted on the job above) for issue
-creation. See [`examples/consumer-eval.yaml`](examples/consumer-eval.yaml)
-for a full eval + triage pairing.
-
-</details>
-
-## Auth
-
-GitHub Models — this workflow's original LLM provider — was fully retired
-on 2026-07-30. `permissions: models: read` no longer does anything; drop it
-from the caller (as in the example above).
-
-Point the eval at any OpenAI-compatible chat-completions provider via the
-`api_base` input + `llm-api-key` secret:
-
-| Provider | `api_base` | `model` example |
-| --- | --- | --- |
-| Cloudflare Workers AI | `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
-| OpenRouter | `https://openrouter.ai/api/v1` | any model id it serves |
-| Cerebras | `https://api.cerebras.ai/v1` | a Cerebras-hosted Llama id |
-
-`llm-api-key` falls back to `models-token`/`GITHUB_TOKEN` when unset, which
-only works against GitHub Models' now-retired endpoint — set `llm-api-key`
-for any live run against a real provider. See
-[`docs/llm-providers.md`](docs/llm-providers.md) for the superseded research
-and [`docs/design.md`](docs/design.md) for the full contract.
-
-The unrelated `gh api` feed-CSV fetch (against the public feed-action data
-repo) still authenticates with the auto-provided `GITHUB_TOKEN`
-(`permissions: contents: read` is enough); pass `models-token` only if you
-need to override that with a fine-grained PAT.
-
-For local runs the script reads `GH_TOKEN` from the environment — `gh auth
-token` provides one with both `gh api` and (depending on your account's
-scopes) Models access.
-
-## Docs
-
-- [`docs/design.md`](docs/design.md) — full pipeline + per-server schema adapters.
-- [`CHANGELOG.md`](CHANGELOG.md) — what changed.
-
-## Layout
-
-- [`Makefile`](Makefile) — single entry point for local + CI tasks (`make help`).
-- [`.github/workflows/eval-papers.yaml`](.github/workflows/eval-papers.yaml) — reusable workflow (`workflow_call`).
-- [`.github/workflows/triage-to-issues.yaml`](.github/workflows/triage-to-issues.yaml) — reusable follow-on workflow that opens one GitHub issue per relevant paper.
-- [`.github/workflows/eval-papers-dispatch.yaml`](.github/workflows/eval-papers-dispatch.yaml) — manual-dispatch wrapper that doubles as a working example.
-- [`scripts/eval_papers.py`](scripts/eval_papers.py) — driver invoked by the workflow; runnable standalone.
-- [`scripts/triage_to_issues.py`](scripts/triage_to_issues.py) — driver invoked by the triage workflow; runnable standalone.
-- [`docs/design.md`](docs/design.md) — pipeline, inputs/outputs, open questions.
+- [`docs/usage.md`](docs/usage.md)
+- [`docs/design.md`](docs/design.md)
+- [`docs/llm-providers.md`](docs/llm-providers.md)
+- [`examples/`](examples/)
+- [`CHANGELOG.md`](CHANGELOG.md)
+- [`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action)
