@@ -6,6 +6,13 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Changed
+- **`tag-release` and `publish-release` call the shared `qte77/.github`
+  reusable workflows (#79).** Same behaviour (annotated `vX.Y.Z` tag on a
+  version change; Release notes from the CHANGELOG block; never overwrite).
+  `bump-my-version.yaml` stays local: the shared bump only rolls the changelog
+  via scriv fragments, and this repo promotes `[Unreleased]` by hand.
+
 ## [0.5.1] - 2026-10-24
 
 ### Fixed
