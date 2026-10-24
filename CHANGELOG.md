@@ -6,6 +6,12 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Changed
+- **`relevance_prompt` input renamed to `relevance_prompt_template` (#64).** The
+  value has always been a `{topic}` template, not the final prompt. The old
+  name still works as a deprecated alias: it logs a workflow warning and is
+  ignored when `relevance_prompt_template` is set.
+
 ## [0.5.1] - 2026-10-24
 
 ### Fixed

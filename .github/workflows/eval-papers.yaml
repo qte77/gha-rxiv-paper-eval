@@ -60,8 +60,12 @@ on:
         description: "If true, run the structured-extraction prompt on the producer CSV's `Abstract` column for each YES verdict."
         type: boolean
         default: true
+      relevance_prompt_template:
+        description: "Override the default relevance system prompt template. {topic} placeholder is substituted."
+        type: string
+        default: ""
       relevance_prompt:
-        description: "Override the default relevance system prompt. {topic} placeholder is substituted."
+        description: "Deprecated alias of `relevance_prompt_template` (logs a warning). Ignored when `relevance_prompt_template` is set."
         type: string
         default: ""
       extraction_prompt:
@@ -173,12 +177,16 @@ jobs:
           INPUT_MODEL: ${{ inputs.model }}
           INPUT_ENRICH: ${{ inputs.enrich }}
           INPUT_FEED_REPO: ${{ inputs.feed_repo }}
-          RELEVANCE_PROMPT: ${{ inputs.relevance_prompt }}
+          RELEVANCE_PROMPT: ${{ inputs.relevance_prompt_template || inputs.relevance_prompt }}
+          INPUT_DEPRECATED_RELEVANCE_PROMPT: ${{ inputs.relevance_prompt }}
           EXTRACTION_PROMPT: ${{ inputs.extraction_prompt }}
           INPUT_API_BASE: ${{ inputs.api_base }}
           INPUT_LLM_API_KEY: ${{ secrets.llm-api-key }}
         run: |
           set -euo pipefail
+          if [[ -n "$INPUT_DEPRECATED_RELEVANCE_PROMPT" ]]; then
+            echo "::warning title=Deprecated input::relevance_prompt is deprecated; rename it to relevance_prompt_template (same {topic} template)."
+          fi
           feed_repo="${INPUT_FEED_REPO:-${GITHUB_REPOSITORY_OWNER}/gha-rxiv-feed-action}"
           args=(
             --feed-repo "$feed_repo"
