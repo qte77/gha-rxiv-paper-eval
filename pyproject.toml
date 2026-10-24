@@ -86,11 +86,16 @@ filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
-# README + the vars example pin `@v<ver>` / `eval_ref: v<ver>`; bump them so the
+# README, docs/usage.md + the vars example pin `@v<ver>` / `eval_ref: v<ver>`; bump them so the
 # published examples point at the latest tag. docs/design.md and scripts/ keep
 # their historical "since v0.3.0" prose (not listed here).
 [[tool.bumpversion.files]]
 filename = "README.md"
+search = "v{current_version}"
+replace = "v{new_version}"
+
+[[tool.bumpversion.files]]
+filename = "docs/usage.md"
 search = "v{current_version}"
 replace = "v{new_version}"
 

@@ -6,6 +6,13 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Changed
+- **README follows the qte77 doc-structure canon (#70).** Hero, badges
+  (Version, CodeFactor, CI), What, How, Why, Refs. Local runs, the caller and
+  triage YAML, the dispatch CLI and provider auth moved to `docs/usage.md`
+  (now bumped by `bump-my-version`). License section/badge pending a licence
+  choice.
+
 ## [0.5.1] - 2026-10-24
 
 ### Fixed
