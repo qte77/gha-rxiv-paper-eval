@@ -716,9 +716,10 @@ def write_summary(
     if after_keyword_filter is not None and after_keyword_filter != after_prefilter:
         lines.append(f"- After keyword pre-filter: {after_keyword_filter}")
     lines.append(f"- Relevant (LLM YES): {len(relevant)}")
-    if after_prefilter > 0:
-        pct = round(100 * call_failures / after_prefilter)
-        lines.append(f"- LLM call failures: {call_failures} / {after_prefilter} ({pct} %)")
+    llm_calls = after_prefilter if after_keyword_filter is None else after_keyword_filter
+    if llm_calls > 0:
+        pct = round(100 * call_failures / llm_calls)
+        lines.append(f"- LLM call failures: {call_failures} / {llm_calls} ({pct} %)")
     lines.extend(["", "## Relevant papers", ""])
     for p in relevant:
         lines.append(f"- [{p.title}]({_paper_url(server, p.doi)}) — *{p.category}*")
@@ -932,9 +933,11 @@ def main() -> int:
     )
 
     print(f"Done. Relevant: {len(relevant)}/{after_prefilter}", file=sys.stderr)
-    if after_prefilter > 0 and call_failures / after_prefilter > 0.5:
+    # Reason: measure against the calls actually sent (post keyword cap), not the
+    # category count — 100/100 failed calls over 3065 papers once read as 3 % (W42).
+    if after_keyword_filter > 0 and call_failures / after_keyword_filter > 0.5:
         print(
-            f"FAIL: {call_failures}/{after_prefilter} LLM calls failed (>50%); "
+            f"FAIL: {call_failures}/{after_keyword_filter} LLM calls failed (>50%); "
             "treating run as broken rather than a true-negative week.",
             file=sys.stderr,
         )
