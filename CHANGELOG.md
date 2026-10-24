@@ -6,6 +6,11 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- **`Paper.id` / `Verdict.id` read-only aliases for `.doi` (#39).** arxiv ids
+  are not DOIs, so code can use the neutral `.id`; `doi` stays the canonical
+  field, so CSV columns, `extracts.jsonl` keys and cache payloads are unchanged.
+
 ### Changed
 - **`tag-release` and `publish-release` call the shared `qte77/.github`
   reusable workflows (#79).** Same behaviour (annotated `vX.Y.Z` tag on a
