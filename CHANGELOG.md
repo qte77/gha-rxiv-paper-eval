@@ -6,6 +6,11 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- **`Paper.id` / `Verdict.id` read-only aliases for `.doi` (#39).** arxiv ids
+  are not DOIs, so code can use the neutral `.id`; `doi` stays the canonical
+  field, so CSV columns, `extracts.jsonl` keys and cache payloads are unchanged.
+
 ### Changed
 - **README follows the qte77 doc-structure canon (#70).** Hero, badges
   (Version, CodeFactor, CI), What, How, Why, Refs. Local runs, the caller and
