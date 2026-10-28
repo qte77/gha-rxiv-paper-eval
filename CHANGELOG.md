@@ -17,6 +17,11 @@ entries are PR-scoped.
   triage YAML, the dispatch CLI and provider auth moved to `docs/usage.md`
   (now bumped by `bump-my-version`). License section/badge pending a licence
   choice.
+- **`tag-release` and `publish-release` call the shared `qte77/.github`
+  reusable workflows (#79).** Same behaviour (annotated `vX.Y.Z` tag on a
+  version change; Release notes from the CHANGELOG block; never overwrite).
+  `bump-my-version.yaml` stays local: the shared bump only rolls the changelog
+  via scriv fragments, and this repo promotes `[Unreleased]` by hand.
 
 ## [0.5.1] - 2026-10-24
 
