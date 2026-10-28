@@ -21,6 +21,11 @@ entries are PR-scoped.
   value has always been a `{topic}` template, not the final prompt. The old
   name still works as a deprecated alias: it logs a workflow warning and is
   ignored when `relevance_prompt_template` is set.
+- **`tag-release` and `publish-release` call the shared `qte77/.github`
+  reusable workflows (#79).** Same behaviour (annotated `vX.Y.Z` tag on a
+  version change; Release notes from the CHANGELOG block; never overwrite).
+  `bump-my-version.yaml` stays local: the shared bump only rolls the changelog
+  via scriv fragments, and this repo promotes `[Unreleased]` by hand.
 
 ### Fixed
 - **`eval-papers.yaml` no longer passes `--max-llm-calls 0` unconditionally
