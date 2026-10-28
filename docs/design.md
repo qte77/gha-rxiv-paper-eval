@@ -68,7 +68,7 @@ producer CSV ─► fetch ─► category pre-filter ─► LLM YES/NO ─► LL
    carries `Title`, `Category`, and `Abstract` (the abstract is sourced from
    the producer CSV's `Abstract` column — no per-paper remote fetch since
    v0.3.0). The system prompt is `DEFAULT_RELEVANCE_PROMPT` with `{topic}`
-   substituted, or fully overridden via the `relevance_prompt` input.
+   substituted, or fully overridden via the `relevance_prompt_template` input.
 5. **Enrichment (optional).** For each YES, run the extraction prompt against
    the same CSV-sourced abstract.
 6. **Artifact upload.** `relevant.csv` + `extracts.jsonl` + `summary.md`.
@@ -95,7 +95,7 @@ for the authoritative list. Highlights:
 | `model` | `openai/gpt-4o-mini` | Model id in whatever form the `api_base` provider expects. GitHub Models (the default's origin) is retired — the default is a historical no-op unless `api_base` is also set. |
 | `api_base` | "" | OpenAI-compatible base URL (no path); the script POSTs to `{api_base}/chat/completions`. Empty falls back to GitHub Models' retired endpoint. Pair with the `llm-api-key` secret. |
 | `enrich` | `true` | Toggles the structured-extraction pass (operates on the CSV-supplied abstract). |
-| `relevance_prompt` / `extraction_prompt` | "" | Override the defaults. |
+| `relevance_prompt_template` / `extraction_prompt` | "" | Override the defaults. `{topic}` is substituted into the relevance template. `relevance_prompt` is a deprecated alias (logs a warning; ignored when `relevance_prompt_template` is set). |
 | `eval_repo` | `qte77/gha-rxiv-paper-eval` | Owner/repo hosting the reusable workflow's source. Fork users override. |
 | `eval_ref` | **required** | Tag/branch/SHA matching the caller's `uses: @<ref>` pin. Reusable workflows cannot auto-derive this (see v0.2.1 changelog). |
 
