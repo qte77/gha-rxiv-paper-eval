@@ -17,6 +17,10 @@ entries are PR-scoped.
   triage YAML, the dispatch CLI and provider auth moved to `docs/usage.md`
   (now bumped by `bump-my-version`). License section/badge pending a licence
   choice.
+- **`relevance_prompt` input renamed to `relevance_prompt_template` (#64).** The
+  value has always been a `{topic}` template, not the final prompt. The old
+  name still works as a deprecated alias: it logs a workflow warning and is
+  ignored when `relevance_prompt_template` is set.
 
 ## [0.5.1] - 2026-10-24
 
