@@ -15,6 +15,6 @@ permissions:
 
 jobs:
   tag:
-    uses: qte77/.github/.github/workflows/tag-release.yml@main
+    uses: qte77/.github/.github/workflows/tag-release.yml@c367e03ffaafb53994782d8ab5cb897a383f9318  # main 2026-10-31
     permissions:
       contents: write
