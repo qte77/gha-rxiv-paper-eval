@@ -170,3 +170,30 @@ need to override that with a fine-grained PAT.
 
 For local runs the script reads `GH_TOKEN` from the environment — `gh auth
 token` provides one for the `gh api` feed fetch.
+
+## Decision-gated relevance (optional)
+
+Set `decide_enabled: true` to route the relevance predicate through the
+shared `decide()` gate (`qte77/.github`'s `actions/decide/`, a calibrated-
+confidence decision model) before falling back to the chat call above for
+its uncertain middle band and for escalations:
+
+```yaml
+    with:
+      decide_enabled: true
+      decide_backend: clef          # default; the only backend wired up today
+      decide_model: clef            # or clef-flash
+      decide_hi: "0.75"             # string — see docs/design.md
+      api_base: "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1"
+      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+      eval_ref: v0.5.1
+    secrets:
+      llm-api-key: ${{ secrets.CF_WORKERS_AI_TOKEN }}
+```
+
+The same `api_base`/`llm-api-key` (or the `llm-api-base` secret) feed both
+the chat fallback and decide()'s `LLM_BASE_URL`/`CF_WORKERS_AI_TOKEN` — no
+second credential to manage for the `clef` backend. See
+[`design.md`](design.md#pipeline) for the full behavior (what counts as an
+"act" band, what gets cached, what shows up in `summary.md`) and its
+calibration caveat.

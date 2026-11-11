@@ -15,6 +15,9 @@
   no scraping, no per-paper fetches.
 - Judges each paper against a free-text topic with any OpenAI-compatible LLM
   provider (Cloudflare Workers AI, OpenRouter, Cerebras, …).
+- Optional: route that judgment through the shared `decide()` calibrated-
+  confidence gate first, falling back to the chat call for its uncertain
+  middle band.
 - Optional category allowlist and keyword-ranked LLM-call cap keep runs inside
   provider quotas.
 - Extracts methods / findings / study type of each hit into `extracts.jsonl`

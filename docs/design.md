@@ -69,6 +69,17 @@ producer CSV ─► fetch ─► category pre-filter ─► LLM YES/NO ─► LL
    the producer CSV's `Abstract` column — no per-paper remote fetch since
    v0.3.0). The system prompt is `DEFAULT_RELEVANCE_PROMPT` with `{topic}`
    substituted, or fully overridden via the `relevance_prompt_template` input.
+   **Optional decide()-gated relevance** (`decide_enabled`): the same
+   title/category/abstract state is first asked as a yes/no predicate
+   through the shared `decide()` gate (`qte77/.github`'s
+   `actions/decide/decide.py`, imported from a pinned-SHA checkout). An
+   "act" band (either tail) is used directly and the chat call is skipped
+   for that paper; "review"/"escalate" falls back to the chat call above.
+   Each paper's cached `Verdict` records which path decided it
+   (`decided_by`: `"chat"` or the decide() `source`) and, when decide()
+   decided it, its `probability`; `summary.md` gets a
+   `Decided via decide(): N / M` line. See `decide_backend` / `decide_model`
+   / `decide_hi` in the inputs table.
 5. **Enrichment (optional).** For each YES, run the extraction prompt against
    the same CSV-sourced abstract.
 6. **Artifact upload.** `relevant.csv` + `extracts.jsonl` + `summary.md`.
@@ -98,6 +109,10 @@ for the authoritative list. Highlights:
 | `relevance_prompt_template` / `extraction_prompt` | "" | Override the defaults. `{topic}` is substituted into the relevance template. `relevance_prompt` is a deprecated alias (logs a warning; ignored when `relevance_prompt_template` is set). |
 | `eval_repo` | `qte77/gha-rxiv-paper-eval` | Owner/repo hosting the reusable workflow's source. Fork users override. |
 | `eval_ref` | **required** | Tag/branch/SHA matching the caller's `uses: @<ref>` pin. Reusable workflows cannot auto-derive this (see v0.2.1 changelog). |
+| `decide_enabled` | `false` | Route the relevance predicate through the shared `decide()` gate before falling back to the chat call for its uncertain middle band and for escalations. Off by default — an existing caller sees no behavior change. |
+| `decide_backend` | `clef` | `decide()` backend. Only `clef` (Cloudflare Workers AI decision models) is wired up today; this workflow sets `CF_WORKERS_AI_TOKEN`/`LLM_BASE_URL` for it from the same `llm-api-key`/`api_base` (or `llm-api-base`) values the chat fallback uses. |
+| `decide_model` | `clef` | `decide()` model id for the clef backend: `clef-flash` (9B) or `clef` (27B). |
+| `decide_hi` | `"0.75"` | Confidence threshold for the "act" band, as a string (avoids this repo's documented `number`-input coercion gotcha, #44). Owner-provided, in-sample calibration, 2026-11-11, against a generic yes/no paper-relevance predicate — **not** calibrated against this workflow's own category/topic wording; tune it if a run's decide-vs-chat split looks off. |
 
 Outputs:
 
@@ -109,11 +124,16 @@ Outputs:
 
 Exit codes:
 
-- `0` — normal completion (including zero relevant papers).
+- `0` — normal completion (including zero relevant papers after the
+  category/keyword filter — a legitimate true-negative week).
 - `2` — more than 50% of LLM calls failed after retries exhausted. A rate-
   limited run that produces no real verdicts fails loudly rather than
   silently shipping a fabricated 0-hit result. See `summary.md`'s `LLM call
   failures: X / Y (Z %)` line for the rate.
+- `3` — the producer CSV itself has 0 rows, *before* any category/keyword
+  filtering. Likely an empty or not-yet-published feed week, or a fetch gone
+  wrong — not a true negative, so it fails loudly instead of succeeding
+  silently as an indistinguishable "0/0 relevant" week.
 
 Environment knobs (`RXIV_EVAL_*`):
 
@@ -135,6 +155,17 @@ Environment knobs (`RXIV_EVAL_*`):
   `llm-api-key`.
 - `OFFLINE` / `STUB_MODE` — stub the LLM in tests (`yes` / `no` / `hash` /
   `flaky`).
+- `DECIDE_DIR` — directory holding a checkout of `qte77/.github`'s
+  `actions/decide/` (the `decide.py` file is imported straight from disk;
+  there's no PyPI package). Empty (default) disables the decide() gate
+  entirely. Set by the workflow itself when `decide_enabled` is true —
+  not something you set directly unless running the script standalone.
+- `DECIDE_BACKEND` (default `clef`) / `DECIDE_MODEL` (default `clef`) /
+  `DECIDE_HI` (default `0.75`) — passed through from the workflow inputs of
+  the same name.
+- `DECIDE_TIMEOUT_SECS` (default `30.0`) — per-call timeout for the
+  decide() gate. Env-only; no workflow input (the chat fallback's own
+  retry/backoff already covers transient failures).
 
 Secrets:
 
@@ -142,7 +173,13 @@ Secrets:
   token for the OpenAI-compatible provider named by `api_base` (e.g. a
   Cloudflare Workers AI API token). Falls back to `models-token`/
   `GITHUB_TOKEN` when absent, which only works against GitHub Models' now-
-  retired endpoint — set it for any live run against a real provider.
+  retired endpoint — set it for any live run against a real provider. Also
+  feeds decide()'s `CF_WORKERS_AI_TOKEN` when `decide_enabled` is true and
+  `decide_backend` is `clef`.
+- `llm-api-base` — optional secret form of the `api_base` input, for callers
+  who treat the OpenAI-compatible base URL itself as sensitive (it embeds a
+  Cloudflare account id). Takes priority over the `api_base` input when
+  both are set; also feeds decide()'s `LLM_BASE_URL`.
 - `models-token` *(optional, since v0.2.2)* — fine-grained PAT covering the
   `gh api` feed-CSV fetch only (unrelated to the LLM provider since the
   migration). `GITHUB_TOKEN` with `permissions: contents: read` is
@@ -240,6 +277,27 @@ Bandit B310 suppression site.
   410/401/403/404 now fail fast with a clear, token-free message instead of
   retrying or crashing on a malformed body. `permissions: models: read`
   dropped from the reusable workflow (dead weight).
+- **decide()-gated relevance (`decide_enabled`).** The relevance predicate
+  can route through the shared `decide()` gate (`qte77/.github`'s
+  `actions/decide/`) first, falling back to the existing chat call for its
+  "review"/"escalate" band; off by default. `is_relevant` now returns the
+  full `Verdict` (value + `decided_by` + `probability`) instead of a bare
+  bool; `_run_relevance_pass` reports a decide-vs-chat split in
+  `summary.md`. New workflow inputs `decide_backend` / `decide_model` /
+  `decide_hi` and secret `llm-api-base` (a secret-channel alternative to
+  the `api_base` input, since reusable-workflow `with:` blocks cannot read
+  the `secrets` context — only `secrets:` can).
+- **Empty-feed detection.** A feed CSV with 0 rows (before any
+  category/keyword filtering) now exits 3 instead of silently succeeding
+  as an indistinguishable "0/0 relevant" week — previously conflated with a
+  legitimate true-negative week where the *filter*, not the feed, produced
+  zero survivors.
+- **`eval-papers-dispatch.yaml`'s self-test pointed at Cloudflare Workers
+  AI.** It still defaulted to a GitHub Models id with no `api_base` set, so
+  every scheduled/manual run since the 2026-07-30 retirement hit the dead
+  endpoint. Now matches the `api_base`/`llm-api-key` (+ `llm-api-base`)
+  pattern the rest of this doc recommends, reading `CF_WORKERS_AI_TOKEN` /
+  `LLM_BASE_URL` repo secrets. `permissions: models: read` dropped here too.
 
 ### Open
 
