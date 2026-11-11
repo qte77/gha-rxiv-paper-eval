@@ -193,7 +193,15 @@ its uncertain middle band and for escalations:
 
 The same `api_base`/`llm-api-key` (or the `llm-api-base` secret) feed both
 the chat fallback and decide()'s `LLM_BASE_URL`/`CF_WORKERS_AI_TOKEN` — no
-second credential to manage for the `clef` backend. See
-[`design.md`](design.md#pipeline) for the full behavior (what counts as an
+second credential to manage for the `clef` backend.
+
+**If you also set `relevance_prompt_template`,** set `decide_instructions`
+too (same `{topic}` placeholder) — they are two independent criteria, and
+the decide() path doesn't derive from the chat prompt. Leaving
+`decide_instructions` unset while customizing `relevance_prompt_template`
+logs a `::warning::` annotation because the two paths would judge the same
+paper by different criteria.
+
+See [`design.md`](design.md#pipeline) for the full behavior (what counts as an
 "act" band, what gets cached, what shows up in `summary.md`) and its
 calibration caveat.

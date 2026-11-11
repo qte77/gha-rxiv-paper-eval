@@ -72,9 +72,15 @@ producer CSV ─► fetch ─► category pre-filter ─► LLM YES/NO ─► LL
    **Optional decide()-gated relevance** (`decide_enabled`): the same
    title/category/abstract state is first asked as a yes/no predicate
    through the shared `decide()` gate (`qte77/.github`'s
-   `actions/decide/decide.py`, imported from a pinned-SHA checkout). An
-   "act" band (either tail) is used directly and the chat call is skipped
-   for that paper; "review"/"escalate" falls back to the chat call above.
+   `actions/decide/decide.py`, imported from a pinned-SHA checkout), using
+   `DEFAULT_DECIDE_INSTRUCTIONS` (or the `decide_instructions` override) as
+   the question — a *separate* criterion from `relevance_prompt_template`,
+   which only changes the chat call's prompt. Setting one without the other
+   means the two paths can judge the same paper by different criteria; the
+   script logs a `::warning::` annotation when it detects that mismatch
+   (custom `relevance_prompt_template`, no `decide_instructions`). An "act"
+   band (either tail) is used directly and the chat call is skipped for
+   that paper; "review"/"escalate" falls back to the chat call above.
    Each paper's cached `Verdict` records which path decided it
    (`decided_by`: `"chat"` or the decide() `source`) and, when decide()
    decided it, its `probability`; `summary.md` gets a
@@ -112,7 +118,8 @@ for the authoritative list. Highlights:
 | `decide_enabled` | `false` | Route the relevance predicate through the shared `decide()` gate before falling back to the chat call for its uncertain middle band and for escalations. Off by default — an existing caller sees no behavior change. |
 | `decide_backend` | `clef` | `decide()` backend. Only `clef` (Cloudflare Workers AI decision models) is wired up today; this workflow sets `CF_WORKERS_AI_TOKEN`/`LLM_BASE_URL` for it from the same `llm-api-key`/`api_base` (or `llm-api-base`) values the chat fallback uses. |
 | `decide_model` | `clef` | `decide()` model id for the clef backend: `clef-flash` (9B) or `clef` (27B). |
-| `decide_hi` | `"0.75"` | Confidence threshold for the "act" band, as a string (avoids this repo's documented `number`-input coercion gotcha, #44). Owner-provided, in-sample calibration, 2026-11-11, against a generic yes/no paper-relevance predicate — **not** calibrated against this workflow's own category/topic wording; tune it if a run's decide-vs-chat split looks off. |
+| `decide_hi` | `"0.75"` | Confidence threshold for the "act" band, as a string (avoids this repo's documented `number`-input coercion gotcha, #44). From a separate calibration run on 2026-11-10 (100 arXiv papers, agent-assigned labels, threshold picked in-sample with a ≤5% error rule on acted items) that used a stricter relevance criterion than this workflow's own default prompt — **not** calibrated against `decide_instructions`; tune it if a run's decide-vs-chat split looks off. |
+| `decide_instructions` | `""` | Override decide()'s predicate instructions (`{topic}` template). Empty uses `DEFAULT_DECIDE_INSTRUCTIONS`, which does **not** track a custom `relevance_prompt_template` — set both together or the script logs a `::warning::` annotation. |
 
 Outputs:
 
@@ -284,9 +291,15 @@ Bandit B310 suppression site.
   full `Verdict` (value + `decided_by` + `probability`) instead of a bare
   bool; `_run_relevance_pass` reports a decide-vs-chat split in
   `summary.md`. New workflow inputs `decide_backend` / `decide_model` /
-  `decide_hi` and secret `llm-api-base` (a secret-channel alternative to
-  the `api_base` input, since reusable-workflow `with:` blocks cannot read
-  the `secrets` context — only `secrets:` can).
+  `decide_hi` / `decide_instructions` and secret `llm-api-base` (a secret-
+  channel alternative to the `api_base` input, since reusable-workflow
+  `with:` blocks cannot read the `secrets` context — only `secrets:` can).
+  `decide_instructions` (empty by default, so the default criterion keeps
+  applying) exists because a custom `relevance_prompt_template` only
+  changes the chat path — without a matching override the decide() path
+  would silently keep judging by this workflow's own default criterion;
+  the script logs a `::warning::` annotation when it detects that
+  combination.
 - **Empty-feed detection.** A feed CSV with 0 rows (before any
   category/keyword filtering) now exits 3 instead of silently succeeding
   as an indistinguishable "0/0 relevant" week — previously conflated with a

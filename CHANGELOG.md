@@ -12,20 +12,27 @@ entries are PR-scoped.
   field, so CSV columns, `extracts.jsonl` keys and cache payloads are unchanged.
 - **Optional decide()-gated relevance.** New workflow inputs `decide_enabled`
   (default `false`), `decide_backend` (default `clef`), `decide_model`
-  (default `clef`), `decide_hi` (default `"0.75"`, a string) and secret
-  `llm-api-base` (a secret-channel alternative to the `api_base` input —
-  reusable-workflow `with:` blocks cannot read the `secrets` context, only
-  `secrets:` can). When enabled, the relevance predicate is asked via the
-  shared `decide()` gate (`qte77/.github`'s `actions/decide/`, checked out
-  at a pinned SHA) first; an "act" band is used directly, "review"/
-  "escalate" falls back to the existing chat call. `is_relevant` now
-  returns the full `Verdict` (value + `decided_by` + `probability`)
-  instead of a bare bool; `Verdict` gains `decided_by`/`probability` fields
-  (both optional, backward-compatible with existing `.cache/*.json` files);
-  `summary.md` gets a `Decided via decide(): N / M` line when enabled. New
-  env vars `RXIV_EVAL_DECIDE_DIR` / `_BACKEND` / `_MODEL` / `_HI` /
+  (default `clef`), `decide_hi` (default `"0.75"`, a string),
+  `decide_instructions` (default `""`) and secret `llm-api-base` (a
+  secret-channel alternative to the `api_base` input — reusable-workflow
+  `with:` blocks cannot read the `secrets` context, only `secrets:` can).
+  When enabled, the relevance predicate is asked via the shared `decide()`
+  gate (`qte77/.github`'s `actions/decide/`, checked out at a pinned SHA)
+  first; an "act" band is used directly, "review"/"escalate" falls back to
+  the existing chat call. `is_relevant` now returns the full `Verdict`
+  (value + `decided_by` + `probability`) instead of a bare bool; `Verdict`
+  gains `decided_by`/`probability` fields (both optional, backward-
+  compatible with existing `.cache/*.json` files); `summary.md` gets a
+  `Decided via decide(): N / M` line when enabled. `decide_instructions`
+  (a `{topic}` template, `DECIDE_INSTRUCTIONS` env var) is a *separate*
+  criterion from `relevance_prompt_template` — the decide() path doesn't
+  derive its question from a custom chat prompt, so setting the latter
+  without the former now logs a `::warning::` annotation
+  (`_warn_if_decide_ignores_custom_prompt`). New env vars
+  `RXIV_EVAL_DECIDE_DIR` / `_BACKEND` / `_MODEL` / `_HI` /
   `_TIMEOUT_SECS`; new helpers `_load_decide`, `_decide_verdict`,
-  `_chat_verdict`, `_classify_logged`; `DEFAULT_DECIDE_INSTRUCTIONS`
+  `_chat_verdict`, `_classify_logged`,
+  `_warn_if_decide_ignores_custom_prompt`; `DEFAULT_DECIDE_INSTRUCTIONS`
   constant. See `docs/usage.md`'s "Decision-gated relevance" section and
   `docs/design.md`'s calibration caveat.
 
