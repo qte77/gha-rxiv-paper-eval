@@ -4,7 +4,7 @@
 > arXiv preprint feed to your topic with an LLM and extracts structured
 > findings from each hit. Prototype.
 
-[![Version](https://img.shields.io/badge/version-v0.5.1-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.6.0-blue)](CHANGELOG.md)
 [![CodeFactor](https://www.codefactor.io/repository/github/qte77/gha-rxiv-paper-eval/badge)](https://www.codefactor.io/repository/github/qte77/gha-rxiv-paper-eval)
 [![CI](https://github.com/qte77/gha-rxiv-paper-eval/actions/workflows/ci.yaml/badge.svg)](https://github.com/qte77/gha-rxiv-paper-eval/actions/workflows/ci.yaml)
 
@@ -32,12 +32,12 @@ Call the reusable workflow from a consumer repo:
 ```yaml
 jobs:
   eval:
-    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.5.1
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.6.0
     with:
       topic: "<your project's relevance criterion>"
       api_base: "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1"
       model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-      eval_ref: v0.5.1  # must match the `uses: @<ref>` pin
+      eval_ref: v0.6.0  # must match the `uses: @<ref>` pin
     secrets:
       llm-api-key: ${{ secrets.CF_WORKERS_AI_TOKEN }}
 ```
