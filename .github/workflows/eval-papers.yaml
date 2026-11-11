@@ -100,7 +100,49 @@ on:
           (the prior auto-derivation in v0.2.0 broke all cross-repo callers).
         type: string
         required: true
+      decide_enabled:
+        description: >-
+          Route the relevance predicate through the shared decide() gate (a
+          calibrated-confidence decision model) before falling back to the
+          existing chat YES/NO call for its uncertain middle band and for
+          escalations (missing credential, timeout, malformed response).
+          Off by default — an existing caller that doesn't set this sees no
+          behavior change at all.
+        type: boolean
+        default: false
+      decide_backend:
+        description: >-
+          decide() backend. Only `clef` (Cloudflare Workers AI decision
+          models) is wired up by this workflow today — it reuses the same
+          `api_base`/`llm-api-key` (or `llm-api-base` secret) as `CF_WORKERS_AI_TOKEN`/`LLM_BASE_URL`.
+        type: string
+        default: clef
+      decide_model:
+        description: "decide() model id for the clef backend: clef-flash (9B) or clef (27B)."
+        type: string
+        default: clef
+      decide_hi:
+        description: >-
+          decide() confidence threshold for the "act" band (string, not
+          number — GitHub Actions' typed `number` input has bitten this
+          repo before with workflow_dispatch coercion; a plain string avoids
+          the question entirely and the script parses it as a float).
+          0.75 is a reasonable starting point for the `clef` model on a
+          generic yes/no paper-relevance predicate (owner-provided,
+          in-sample calibration, 2026-11-11) — it was NOT calibrated
+          against this workflow's own category/topic wording, so tune it
+          if a run's decide-vs-chat split looks off for your topic.
+        type: string
+        default: "0.75"
     secrets:
+      llm-api-base:
+        description: >-
+          Optional secret form of `api_base`, for callers who treat the
+          OpenAI-compatible base URL itself as sensitive (it embeds a
+          Cloudflare account id). Takes priority over the `api_base` input
+          when both are set. Also feeds decide()'s `LLM_BASE_URL` when
+          `decide_enabled` is true and `decide_backend` is `clef`.
+        required: false
       models-token:
         description: >-
           Optional override for the auto-provided GITHUB_TOKEN used for the
@@ -160,6 +202,19 @@ jobs:
       - name: Install deps
         run: make setup
 
+      - name: Check out the decide action (qte77/.github)
+        # Only needed when decide_enabled opts in — the shared decision gate
+        # has no PyPI package, so the script imports decide.py straight from
+        # this checkout (see `_load_decide`). Pinned by commit SHA: that repo
+        # has no tags.
+        if: ${{ inputs.decide_enabled }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          repository: qte77/.github
+          ref: 43ad1211e962f82fab823377dcc7272054d8196c  # main 2026-11-10 (clef backend since #47)
+          path: decide-src
+          persist-credentials: false
+
       - name: Run evaluation
         id: run
         env:
@@ -180,8 +235,15 @@ jobs:
           RELEVANCE_PROMPT: ${{ inputs.relevance_prompt_template || inputs.relevance_prompt }}
           INPUT_DEPRECATED_RELEVANCE_PROMPT: ${{ inputs.relevance_prompt }}
           EXTRACTION_PROMPT: ${{ inputs.extraction_prompt }}
-          INPUT_API_BASE: ${{ inputs.api_base }}
+          # Secret takes priority over the plain input (both ultimately feed
+          # RXIV_EVAL_API_BASE below) — see the `llm-api-base` secret's
+          # description.
+          INPUT_API_BASE: ${{ secrets.llm-api-base || inputs.api_base }}
           INPUT_LLM_API_KEY: ${{ secrets.llm-api-key }}
+          INPUT_DECIDE_ENABLED: ${{ inputs.decide_enabled }}
+          INPUT_DECIDE_BACKEND: ${{ inputs.decide_backend }}
+          INPUT_DECIDE_MODEL: ${{ inputs.decide_model }}
+          INPUT_DECIDE_HI: ${{ inputs.decide_hi }}
         run: |
           set -euo pipefail
           if [[ -n "$INPUT_DEPRECATED_RELEVANCE_PROMPT" ]]; then
@@ -208,6 +270,18 @@ jobs:
           # environment honest about what was actually configured.
           [[ -n "$INPUT_API_BASE" ]] && export RXIV_EVAL_API_BASE="$INPUT_API_BASE"
           [[ -n "$INPUT_LLM_API_KEY" ]] && export RXIV_EVAL_LLM_API_KEY="$INPUT_LLM_API_KEY"
+          if [[ "$INPUT_DECIDE_ENABLED" == "true" ]]; then
+            export RXIV_EVAL_DECIDE_DIR="decide-src/actions/decide"
+            export RXIV_EVAL_DECIDE_BACKEND="$INPUT_DECIDE_BACKEND"
+            export RXIV_EVAL_DECIDE_MODEL="$INPUT_DECIDE_MODEL"
+            export RXIV_EVAL_DECIDE_HI="$INPUT_DECIDE_HI"
+            # decide()'s own env var names (its clef backend reads these
+            # directly, independent of this script's RXIV_EVAL_* convention)
+            # — reusing the same api_base/llm-api-key the chat fallback uses
+            # keeps a single secret/account per caller.
+            export CF_WORKERS_AI_TOKEN="$INPUT_LLM_API_KEY"
+            export LLM_BASE_URL="$INPUT_API_BASE"
+          fi
 
           uv run --no-dev python scripts/eval_papers.py "${args[@]}"
           cat output/.workflow_outputs >> "$GITHUB_OUTPUT"
