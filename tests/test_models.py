@@ -162,10 +162,33 @@ def test_verdict_basic_construction() -> None:
     assert v.raw == "YES"
 
 
+def test_verdict_defaults_decided_by_chat_with_no_probability() -> None:
+    # Backward compat: a plain chat verdict (the only shape that existed
+    # before decide() integration) must still construct with just
+    # doi/relevant/raw, and default to "chat" provenance.
+    v = Verdict(doi="10.1101/x", relevant=True, raw="YES")
+    assert v.decided_by == "chat"
+    assert v.probability is None
+
+
+def test_verdict_accepts_decide_provenance() -> None:
+    v = Verdict(
+        doi="10.1101/x", relevant=True, raw="decide:True", decided_by="clef", probability=0.92
+    )
+    assert v.decided_by == "clef"
+    assert v.probability == 0.92
+
+
 def test_verdict_serializes_to_dict() -> None:
     v = Verdict(doi="10.1101/x", relevant=False, raw="NO")
     payload = v.model_dump()
-    assert payload == {"doi": "10.1101/x", "relevant": False, "raw": "NO"}
+    assert payload == {
+        "doi": "10.1101/x",
+        "relevant": False,
+        "raw": "NO",
+        "decided_by": "chat",
+        "probability": None,
+    }
 
 
 def test_verdict_id_aliases_doi() -> None:
@@ -177,6 +200,15 @@ def test_verdict_roundtrip_through_json() -> None:
     v = Verdict(doi="10.1101/x", relevant=True, raw="YES")
     rehydrated = Verdict.model_validate_json(v.model_dump_json())
     assert rehydrated == v
+
+
+def test_verdict_loads_cache_json_written_before_decide_fields_existed() -> None:
+    # Older `.cache/*.json` files only ever had doi/relevant/raw. New fields
+    # must default cleanly so pre-existing caches stay valid after upgrade.
+    old_cache_json = '{"doi": "10.1101/x", "relevant": true, "raw": "YES"}'
+    v = Verdict.model_validate_json(old_cache_json)
+    assert v.decided_by == "chat"
+    assert v.probability is None
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +266,11 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "RXIV_EVAL_NO_CACHE",
         "RXIV_EVAL_API_BASE",
         "RXIV_EVAL_LLM_API_KEY",
+        "RXIV_EVAL_DECIDE_DIR",
+        "RXIV_EVAL_DECIDE_BACKEND",
+        "RXIV_EVAL_DECIDE_MODEL",
+        "RXIV_EVAL_DECIDE_HI",
+        "RXIV_EVAL_DECIDE_TIMEOUT_SECS",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -245,6 +282,29 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.no_cache is False
     assert s.api_base == ""
     assert s.llm_api_key == ""
+    # decide() is off by default: empty decide_dir means `main()` never
+    # imports decide.py, so an existing caller who doesn't opt in sees no
+    # behavior change at all.
+    assert s.decide_dir == ""
+    assert s.decide_backend == "clef"
+    assert s.decide_model == "clef"
+    assert s.decide_hi == 0.75
+    assert s.decide_timeout_secs == 30.0
+
+
+def test_settings_reads_decide_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RXIV_EVAL_DECIDE_DIR", "decide-src/actions/decide")
+    monkeypatch.setenv("RXIV_EVAL_DECIDE_BACKEND", "clef")
+    monkeypatch.setenv("RXIV_EVAL_DECIDE_MODEL", "clef-flash")
+    monkeypatch.setenv("RXIV_EVAL_DECIDE_HI", "0.8")
+    monkeypatch.setenv("RXIV_EVAL_DECIDE_TIMEOUT_SECS", "45")
+
+    s = Settings()
+    assert s.decide_dir == "decide-src/actions/decide"
+    assert s.decide_backend == "clef"
+    assert s.decide_model == "clef-flash"
+    assert s.decide_hi == 0.8
+    assert s.decide_timeout_secs == 45.0
 
 
 def test_settings_reads_env_prefix(monkeypatch: pytest.MonkeyPatch) -> None:

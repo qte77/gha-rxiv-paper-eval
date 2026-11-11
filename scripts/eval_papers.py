@@ -25,6 +25,7 @@ import argparse
 import csv
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import os
 import random
@@ -36,7 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +53,27 @@ DEFAULT_RELEVANCE_PROMPT = (
     "techniques) count even when their experimental system differs from the "
     "topic's primary targets, provided the methodology is transferable. "
     "When borderline, prefer YES if methodology is transferable."
+)
+
+# A `decide()` predicate asks a direct yes/no question about `state`; it is
+# never shown the reply-format instructions a chat model needs ("Reply with a
+# single token"). Phrased as a question, not a declarative "a paper is
+# relevant if ...", so a decision-model backend (clef/jev) can answer it
+# directly. Same substantive criterion as DEFAULT_RELEVANCE_PROMPT so the two
+# paths judge consistently when a run falls back from one to the other.
+# UNVERIFIED: the decide_hi default (see Settings.decide_hi) was calibrated
+# against a general yes/no paper-relevance predicate on a different topic and
+# exact wording than this one — treat it as a reasonable starting point, not
+# a guarantee for this prompt's category/topic space. Tune `decide_hi` (the
+# `decide_hi` workflow input / `RXIV_EVAL_DECIDE_HI` env var) if a run's
+# act/review split looks off for your topic.
+DEFAULT_DECIDE_INSTRUCTIONS = (
+    "Is this paper relevant to: {topic}? Methodology papers (computational "
+    "tools, simulation methods, ML / AI frameworks, structure-guided design "
+    "pipelines, scaffold-engineering techniques) count even when their "
+    "experimental system differs from the topic's primary targets, provided "
+    "the methodology is transferable. When borderline, answer yes if "
+    "methodology is transferable."
 )
 
 _EXTRACTION_PROMPT_TEMPLATE = (
@@ -159,6 +181,23 @@ class Settings(BaseSettings):
     # GH_TOKEN (which also authenticates the unrelated `gh api` feed fetch).
     # Workflow secret: `llm-api-key`.
     llm_api_key: str = ""
+    # Directory holding a checkout of qte77/.github's `actions/decide/`
+    # (containing `decide.py`), imported directly — see `_load_decide`. Empty
+    # (default) disables the decide() gate entirely: the relevance pass runs
+    # the chat YES/NO call only, unchanged from before this was added.
+    # Workflow input: `decide_enabled` (the workflow sets this env var itself
+    # once it has checked out qte77/.github; it is not a tunable input).
+    decide_dir: str = ""
+    # decide() backend/model/confidence-threshold for the relevance predicate.
+    # Workflow inputs: `decide_backend` / `decide_model` / `decide_hi`.
+    decide_backend: str = "clef"
+    decide_model: str = "clef"
+    decide_hi: float = 0.75
+    # Per-call timeout for the decide() gate. Env-only (no workflow input) —
+    # the chat fallback's own retry/backoff already covers transient
+    # failures, so this only bounds how long a single decide() attempt waits
+    # before falling back to chat.
+    decide_timeout_secs: float = 30.0
 
 
 class Paper(BaseModel):
@@ -226,6 +265,15 @@ class Verdict(BaseModel):
     doi: str
     relevant: bool
     raw: str
+    # Provenance: "decide" when a decide() "act" band answered this paper,
+    # else "chat" (the YES/NO call — either decide() was disabled, or it
+    # landed in the "review"/"escalate" band and chat decided instead).
+    # Defaults keep older cached JSON (written before these fields existed)
+    # valid on load.
+    decided_by: str = "chat"
+    # decide()'s confidence for the band it returned; None when `decided_by`
+    # is "chat" (the chat call has no comparable probability signal).
+    probability: float | None = None
 
     @property
     def id(self) -> str:
@@ -594,6 +642,57 @@ def gh_models_rest(model: str, system_prompt: str, user_prompt: str, max_tokens:
     )
 
 
+def _load_decide(decide_dir: Path) -> Callable[..., dict[str, dict[str, Any]]]:
+    """Import `decide()` from a checkout of qte77/.github's `actions/decide/`.
+
+    There is no PyPI package for the shared decision gate, so the caller
+    checks out `qte77/.github` at a pinned SHA and this loads `decide.py`
+    straight from disk (no `sys.path` mutation, no vendored copy to drift).
+    """
+    path = decide_dir / "decide.py"
+    # Reason: `spec_from_file_location` happily builds a spec for a path that
+    # does not exist — the raw FileNotFoundError only surfaces later, inside
+    # `exec_module`. Checking existence up front turns a misconfigured
+    # RXIV_EVAL_DECIDE_DIR into one clear, actionable message instead.
+    if not path.is_file():
+        raise SystemExit(f"Cannot load decide() from {path} (RXIV_EVAL_DECIDE_DIR misconfigured?)")
+    spec = importlib.util.spec_from_file_location("rxiv_eval_decide", path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"Cannot load decide() from {path} (RXIV_EVAL_DECIDE_DIR misconfigured?)")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.decide
+
+
+def _decide_verdict(
+    decide_fn: Callable[..., dict[str, dict[str, Any]]],
+    state: str,
+    *,
+    instructions: str,
+    backend: str,
+    model: str,
+    hi: float,
+    timeout: float,
+) -> dict[str, Any]:
+    """Ask decide() the relevance predicate for `state`; return its answer dict.
+
+    `decide()` never raises for a backend/network failure (see its own
+    docstring) — a failure surfaces as `{"band": "escalate", ...}`, which the
+    caller treats the same as a low-confidence "review" band: fall back to
+    the chat call.
+    """
+    question = {"name": "relevant", "type": "predicate", "instructions": instructions}
+    return decide_fn(state, [question], backend=backend, model=model, hi=hi, timeout=timeout)[
+        "relevant"
+    ]
+
+
+def _chat_verdict(paper: Paper, user_prompt: str, *, model: str, system_prompt: str) -> Verdict:
+    """Classify `paper` via the chat YES/NO call; always `decided_by="chat"`."""
+    raw = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
+    return Verdict(doi=paper.doi, relevant=raw.strip().upper().startswith("YES"), raw=raw)
+
+
 def is_relevant(
     paper: Paper,
     abstract: str,
@@ -601,29 +700,57 @@ def is_relevant(
     model: str,
     system_prompt: str,
     output_dir: Path | None = None,
-) -> bool:
-    """Return True iff the LLM classifies the paper as relevant to the topic."""
-    use_cache = output_dir is not None and not Settings().no_cache
+    decide_fn: Callable[..., dict[str, dict[str, Any]]] | None = None,
+    decide_instructions: str = "",
+) -> Verdict:
+    """Classify `paper`, returning the full `Verdict` (value + provenance).
+
+    When `decide_fn` is given, the relevance predicate is asked via the
+    shared decide() gate first. Its "act" band (either tail — a confident NO
+    is as actionable as a confident YES) is used directly, `decided_by`
+    "decide". A "review"/"escalate" band, or no `decide_fn` at all, falls
+    back to the existing chat YES/NO call, `decided_by` "chat".
+    """
+    settings = Settings()
+    use_cache = output_dir is not None and not settings.no_cache
     if use_cache:
         cached = _cache_load(output_dir, paper.doi)  # type: ignore[arg-type]
         if cached is not None:
-            return cached.relevant
+            return cached
 
     user_prompt = (
         f"Title: {paper.title}\n"
         f"Category: {paper.category}\n\n"
         f"Abstract: {abstract or '(unavailable)'}"
     )
-    raw = gh_models_rest(model, system_prompt, user_prompt, max_tokens=4)
-    relevant = raw.strip().upper().startswith("YES")
+
+    verdict: Verdict | None = None
+    if decide_fn is not None:
+        answer = _decide_verdict(
+            decide_fn,
+            user_prompt,
+            instructions=decide_instructions,
+            backend=settings.decide_backend,
+            model=settings.decide_model,
+            hi=settings.decide_hi,
+            timeout=settings.decide_timeout_secs,
+        )
+        if answer["band"] == "act":
+            verdict = Verdict(
+                doi=paper.doi,
+                relevant=bool(answer["value"]),
+                raw=f"decide:{answer['value']}",
+                decided_by=answer["source"],
+                probability=answer["probability"],
+            )
+
+    if verdict is None:
+        verdict = _chat_verdict(paper, user_prompt, model=model, system_prompt=system_prompt)
 
     if use_cache:
-        _cache_save(
-            output_dir,  # type: ignore[arg-type]
-            Verdict(doi=paper.doi, relevant=relevant, raw=raw),
-        )
+        _cache_save(output_dir, verdict)  # type: ignore[arg-type]
 
-    return relevant
+    return verdict
 
 
 def _urlopen_bytes(
@@ -707,6 +834,8 @@ def write_summary(
     relevant: list[Paper],
     call_failures: int = 0,
     after_keyword_filter: int | None = None,
+    decide_enabled: bool = False,
+    decide_count: int = 0,
 ) -> None:
     """Render the run's `summary.md` artifact.
 
@@ -718,6 +847,11 @@ def write_summary(
     `--max-llm-calls` keyword pre-filter (#7); surfaced only when the cap
     actually fired (i.e. differs from `after_prefilter`) so the audit trail
     explains why fewer papers reached the LLM than the category filter passed.
+
+    `decide_count` is how many papers the decide() gate answered directly
+    (an "act" band); surfaced only when `decide_enabled`, so a run's
+    decide-vs-chat split is visible even when the count is 0 (every call
+    landed in "review"/"escalate" and fell back to chat).
     """
     lines = [
         f"# rxiv eval — {server} {year}-W{week}",
@@ -733,6 +867,11 @@ def write_summary(
     if llm_calls > 0:
         pct = round(100 * call_failures / llm_calls)
         lines.append(f"- LLM call failures: {call_failures} / {llm_calls} ({pct} %)")
+    if decide_enabled:
+        lines.append(
+            f"- Decided via decide(): {decide_count} / {llm_calls} "
+            "(the rest fell back to the chat call)"
+        )
     lines.extend(["", "## Relevant papers", ""])
     for p in relevant:
         lines.append(f"- [{p.title}]({_paper_url(server, p.doi)}) — *{p.category}*")
@@ -796,48 +935,87 @@ def _prefilter(papers: list[Paper], categories: str, max_papers: int) -> list[Pa
     return papers
 
 
+def _classify_logged(
+    paper: Paper,
+    index: int,
+    total: int,
+    *,
+    model: str,
+    relevance_prompt: str,
+    output_dir: Path,
+    decide_fn: Callable[..., dict[str, dict[str, Any]]] | None,
+    decide_instructions: str,
+) -> tuple[bool, bool, bool]:
+    """Classify one paper and log the outcome.
+
+    Returns `(keep, failed, decided_by_decide)`. `failed` is True iff the
+    call raised `RuntimeError` after exhausting retries (`keep` is then
+    False and does not mean "classified NO").
+    """
+    try:
+        verdict = is_relevant(
+            paper,
+            paper.abstract,
+            model=model,
+            system_prompt=relevance_prompt,
+            output_dir=output_dir,
+            decide_fn=decide_fn,
+            decide_instructions=decide_instructions,
+        )
+    except RuntimeError as exc:
+        print(
+            f"WARN: relevance call failed ({index}/{total}) for {paper.doi}: {exc}",
+            file=sys.stderr,
+        )
+        return False, True, False
+    marker = "YES" if verdict.relevant else "no "
+    print(
+        f"[{index}/{total}] {marker} {paper.doi} {paper.title[:80]} ({verdict.decided_by})",
+        file=sys.stderr,
+    )
+    return verdict.relevant, False, verdict.decided_by != "chat"
+
+
 def _run_relevance_pass(
     papers: list[Paper],
     *,
     model: str,
     relevance_prompt: str,
     output_dir: Path,
-) -> tuple[list[tuple[Paper, str]], int]:
-    """Classify papers via the LLM; return (relevant, call_failures).
+    decide_fn: Callable[..., dict[str, dict[str, Any]]] | None = None,
+    decide_instructions: str = "",
+) -> tuple[list[tuple[Paper, str]], int, int]:
+    """Classify papers; return (relevant, call_failures, decide_count).
 
     `call_failures` counts papers whose `is_relevant` call raised
     `RuntimeError` after exhausting retries — needed so the pipeline can
     distinguish a true-negative week from a rate-limited week (issue #6).
+    `decide_count` counts papers the decide() gate answered directly (an
+    "act" band); 0 when `decide_fn` is None.
     """
     relevant: list[tuple[Paper, str]] = []
     call_failures = 0
+    decide_count = 0
     total = len(papers)
     interval = Settings().llm_call_interval_secs
     for i, paper in enumerate(papers, 1):
-        abstract = paper.abstract
-        try:
-            keep = is_relevant(
-                paper,
-                abstract,
-                model=model,
-                system_prompt=relevance_prompt,
-                output_dir=output_dir,
-            )
-        except RuntimeError as exc:
-            print(
-                f"WARN: relevance call failed ({i}/{total}) for {paper.doi}: {exc}",
-                file=sys.stderr,
-            )
-            call_failures += 1
-            keep = False
-        else:
-            marker = "YES" if keep else "no "
-            print(f"[{i}/{total}] {marker} {paper.doi} {paper.title[:80]}", file=sys.stderr)
+        keep, failed, decided = _classify_logged(
+            paper,
+            i,
+            total,
+            model=model,
+            relevance_prompt=relevance_prompt,
+            output_dir=output_dir,
+            decide_fn=decide_fn,
+            decide_instructions=decide_instructions,
+        )
+        call_failures += int(failed)
+        decide_count += int(decided)
         if keep:
-            relevant.append((paper, abstract))
+            relevant.append((paper, paper.abstract))
         if i < total and interval > 0:
             time.sleep(interval)
-    return relevant, call_failures
+    return relevant, call_failures, decide_count
 
 
 def _run_extraction_pass(
@@ -882,6 +1060,33 @@ def _warn_deprecated_env_vars() -> None:
         )
 
 
+def _warn_if_decide_ignores_custom_prompt(
+    decide_fn: Callable[..., dict[str, dict[str, Any]]] | None,
+    relevance_prompt_override: str | None,
+    decide_instructions_override: str | None,
+) -> None:
+    """Warn when decide() would judge papers by a different criterion than chat.
+
+    A custom `RELEVANCE_PROMPT` (the `relevance_prompt_template` input) only
+    changes the chat fallback's criterion — `DEFAULT_DECIDE_INSTRUCTIONS`
+    does not derive from it. Without a matching `DECIDE_INSTRUCTIONS`
+    override (the `decide_instructions` input), the decide() path would
+    silently keep judging papers against this workflow's own default
+    criterion, so the two paths could answer different questions for the
+    same paper. `::warning::` surfaces as a GitHub Actions log annotation on
+    either stdout or stderr.
+    """
+    if decide_fn is not None and relevance_prompt_override and not decide_instructions_override:
+        print(
+            "::warning::decide_enabled is set with a custom relevance_prompt_template "
+            "but no decide_instructions override — the decide() path judges papers "
+            "against this workflow's default criterion, not your custom prompt. Set "
+            "the decide_instructions input (same {topic} template) to keep both paths "
+            "consistent.",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
     """Drive the full pipeline: fetch, prefilter, classify, enrich, write artifacts."""
     _warn_deprecated_env_vars()
@@ -901,6 +1106,14 @@ def main() -> int:
     papers = load_papers(feed_csv, server=args.server)
     total = len(papers)
     print(f"Loaded {total} papers", file=sys.stderr)
+    if total == 0:
+        print(
+            "FAIL: feed CSV has 0 rows (empty feed, wrong week, or a producer "
+            "outage) — treating this as a broken run rather than a quiet "
+            "true-negative week.",
+            file=sys.stderr,
+        )
+        return 3
 
     papers = _prefilter(papers, args.categories, args.max_papers)
     after_prefilter = len(papers)
@@ -908,14 +1121,28 @@ def main() -> int:
     papers = _keyword_prefilter(papers, args.topic, args.max_llm_calls)
     after_keyword_filter = len(papers)
 
-    relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(
+    relevance_prompt_override = os.environ.get("RELEVANCE_PROMPT")
+    relevance_prompt = (relevance_prompt_override or DEFAULT_RELEVANCE_PROMPT).format(
         topic=args.topic
     )
-    relevant, call_failures = _run_relevance_pass(
+    decide_settings = Settings()
+    decide_fn = (
+        _load_decide(Path(decide_settings.decide_dir)) if decide_settings.decide_dir else None
+    )
+    decide_instructions_override = os.environ.get("DECIDE_INSTRUCTIONS")
+    decide_instructions = (decide_instructions_override or DEFAULT_DECIDE_INSTRUCTIONS).format(
+        topic=args.topic
+    )
+    _warn_if_decide_ignores_custom_prompt(
+        decide_fn, relevance_prompt_override, decide_instructions_override
+    )
+    relevant, call_failures, decide_count = _run_relevance_pass(
         papers,
         model=args.model,
         relevance_prompt=relevance_prompt,
         output_dir=output_dir,
+        decide_fn=decide_fn,
+        decide_instructions=decide_instructions,
     )
 
     write_papers([p for p, _ in relevant], output_dir / "relevant.csv")
@@ -936,6 +1163,8 @@ def main() -> int:
         relevant=[p for p, _ in relevant],
         call_failures=call_failures,
         after_keyword_filter=after_keyword_filter,
+        decide_enabled=decide_fn is not None,
+        decide_count=decide_count,
     )
 
     append_step_summary(output_dir, server=args.server, year=year, week=week)

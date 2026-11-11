@@ -10,6 +10,31 @@ entries are PR-scoped.
 - **`Paper.id` / `Verdict.id` read-only aliases for `.doi` (#39).** arxiv ids
   are not DOIs, so code can use the neutral `.id`; `doi` stays the canonical
   field, so CSV columns, `extracts.jsonl` keys and cache payloads are unchanged.
+- **Optional decide()-gated relevance.** New workflow inputs `decide_enabled`
+  (default `false`), `decide_backend` (default `clef`), `decide_model`
+  (default `clef`), `decide_hi` (default `"0.75"`, a string),
+  `decide_instructions` (default `""`) and secret `llm-api-base` (a
+  secret-channel alternative to the `api_base` input — reusable-workflow
+  `with:` blocks cannot read the `secrets` context, only `secrets:` can).
+  When enabled, the relevance predicate is asked via the shared `decide()`
+  gate (`qte77/.github`'s `actions/decide/`, checked out at a pinned SHA)
+  first; an "act" band is used directly, "review"/"escalate" falls back to
+  the existing chat call. `is_relevant` now returns the full `Verdict`
+  (value + `decided_by` + `probability`) instead of a bare bool; `Verdict`
+  gains `decided_by`/`probability` fields (both optional, backward-
+  compatible with existing `.cache/*.json` files); `summary.md` gets a
+  `Decided via decide(): N / M` line when enabled. `decide_instructions`
+  (a `{topic}` template, `DECIDE_INSTRUCTIONS` env var) is a *separate*
+  criterion from `relevance_prompt_template` — the decide() path doesn't
+  derive its question from a custom chat prompt, so setting the latter
+  without the former now logs a `::warning::` annotation
+  (`_warn_if_decide_ignores_custom_prompt`). New env vars
+  `RXIV_EVAL_DECIDE_DIR` / `_BACKEND` / `_MODEL` / `_HI` /
+  `_TIMEOUT_SECS`; new helpers `_load_decide`, `_decide_verdict`,
+  `_chat_verdict`, `_classify_logged`,
+  `_warn_if_decide_ignores_custom_prompt`; `DEFAULT_DECIDE_INSTRUCTIONS`
+  constant. See `docs/usage.md`'s "Decision-gated relevance" section and
+  `docs/design.md`'s calibration caveat.
 
 ### Changed
 - **README follows the qte77 doc-structure canon (#70).** Hero, badges
@@ -32,12 +57,18 @@ entries are PR-scoped.
   (#80).** The flag is only added when `max_llm_calls` is non-zero (0 is the
   script's own "no cap" default), so callers whose `eval_ref` predates the
   flag no longer exit 2 on `unrecognized arguments`.
-
-### Fixed
-- **`eval-papers.yaml` no longer passes `--max-llm-calls 0` unconditionally
-  (#80).** The flag is only added when `max_llm_calls` is non-zero (0 is the
-  script's own "no cap" default), so callers whose `eval_ref` predates the
-  flag no longer exit 2 on `unrecognized arguments`.
+- **A feed CSV with 0 rows now fails the job (exit 3) instead of succeeding
+  silently as "0/0 relevant".** Previously indistinguishable in `summary.md`
+  from a legitimate true-negative week where the category/keyword *filter*
+  (not the feed itself) produced zero survivors — that case is unchanged
+  and still exits 0.
+- **`eval-papers-dispatch.yaml`'s self-test pointed at Cloudflare Workers
+  AI.** It still defaulted to a GitHub Models model id with no `api_base`
+  set, so every scheduled/manual run since GitHub Models' 2026-07-30
+  retirement hit the dead endpoint. Now reads `CF_WORKERS_AI_TOKEN` /
+  `LLM_BASE_URL` repo secrets, matching the pattern this repo recommends to
+  consumers; `permissions: models: read` dropped (dead weight, same as the
+  reusable workflow in v0.5.0).
 
 ## [0.5.1] - 2026-10-24
 
