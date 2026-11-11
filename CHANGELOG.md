@@ -6,6 +6,8 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-11
+
 ### Added
 - **`Paper.id` / `Verdict.id` read-only aliases for `.doi` (#39).** arxiv ids
   are not DOIs, so code can use the neutral `.id`; `doi` stays the canonical

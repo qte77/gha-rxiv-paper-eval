@@ -70,7 +70,7 @@ permissions:
 
 jobs:
   eval:
-    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.5.1
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/eval-papers.yaml@v0.6.0
     with:
       topic: "<your project's relevance criterion>"
       categories: "<comma-separated bioRxiv categories>"
@@ -80,7 +80,7 @@ jobs:
       model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       # eval_ref MUST match the `uses: @<ref>` pin above. A reusable
       # workflow cannot reliably introspect its own ref at runtime.
-      eval_ref: v0.5.1
+      eval_ref: v0.6.0
       # eval_repo defaults to qte77/gha-rxiv-paper-eval; fork users set
       # `eval_repo: <their-org>/gha-rxiv-paper-eval`.
       # feed_repo defaults to <caller-owner>/gha-rxiv-feed-action; override if needed.
@@ -104,11 +104,11 @@ it as a follow-on job in the same consumer workflow:
   triage:
     needs: eval
     if: ${{ fromJSON(needs.eval.outputs.relevant_count) > 0 }}
-    uses: qte77/gha-rxiv-paper-eval/.github/workflows/triage-to-issues.yaml@v0.5.1
+    uses: qte77/gha-rxiv-paper-eval/.github/workflows/triage-to-issues.yaml@v0.6.0
     with:
       artifact_name: ${{ needs.eval.outputs.artifact_name }}
       # eval_ref MUST match the `uses: @<ref>` pin on this line.
-      eval_ref: v0.5.1
+      eval_ref: v0.6.0
       # Optional: label (default "rxiv-feed"), title_prefix (default "rxiv:").
     permissions:
       contents: read
@@ -186,7 +186,7 @@ its uncertain middle band and for escalations:
       decide_hi: "0.75"             # string — see docs/design.md
       api_base: "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1"
       model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-      eval_ref: v0.5.1
+      eval_ref: v0.6.0
     secrets:
       llm-api-key: ${{ secrets.CF_WORKERS_AI_TOKEN }}
 ```
