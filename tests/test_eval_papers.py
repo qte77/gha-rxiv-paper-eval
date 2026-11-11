@@ -376,6 +376,55 @@ class LoadDecideTests(unittest.TestCase):
             eval_papers._load_decide(pathlib.Path(tmpdir) / "nonexistent")
 
 
+class WarnIfDecideIgnoresCustomPromptTests(unittest.TestCase):
+    """A custom `relevance_prompt_template` only changes the chat fallback's
+    criterion — `DEFAULT_DECIDE_INSTRUCTIONS` doesn't derive from it. Without
+    a matching `decide_instructions` override, the two paths would silently
+    judge papers by different criteria. A real decide_fn is irrelevant here
+    (any truthy/None sentinel exercises the same branch), so these tests use
+    a plain object instead of a working callable.
+    """
+
+    def _capture_stderr(self, **kwargs) -> str:
+        stderr_capture = io.StringIO()
+        with patch("sys.stderr", stderr_capture):
+            eval_papers._warn_if_decide_ignores_custom_prompt(**kwargs)
+        return stderr_capture.getvalue()
+
+    def test_warns_when_decide_enabled_with_custom_prompt_and_no_override(self) -> None:
+        out = self._capture_stderr(
+            decide_fn=object(),
+            relevance_prompt_override="a custom strict prompt",
+            decide_instructions_override=None,
+        )
+        self.assertIn("::warning::", out)
+        self.assertIn("decide_instructions", out)
+
+    def test_no_warning_when_decide_instructions_override_is_set(self) -> None:
+        out = self._capture_stderr(
+            decide_fn=object(),
+            relevance_prompt_override="a custom strict prompt",
+            decide_instructions_override="a matching custom decide predicate",
+        )
+        self.assertEqual(out, "")
+
+    def test_no_warning_when_relevance_prompt_not_customized(self) -> None:
+        out = self._capture_stderr(
+            decide_fn=object(),
+            relevance_prompt_override=None,
+            decide_instructions_override=None,
+        )
+        self.assertEqual(out, "")
+
+    def test_no_warning_when_decide_disabled(self) -> None:
+        out = self._capture_stderr(
+            decide_fn=None,
+            relevance_prompt_override="a custom strict prompt",
+            decide_instructions_override=None,
+        )
+        self.assertEqual(out, "")
+
+
 def _http_error(code: int) -> urllib.error.HTTPError:
     """Helper: build an HTTPError with the given status code."""
     return urllib.error.HTTPError(
@@ -875,7 +924,9 @@ class MainDecideIntegrationTests(unittest.TestCase):
         self._env.start()
         self.addCleanup(self._env.stop)
 
-    def _run_main(self, decide_dir: pathlib.Path, out: pathlib.Path) -> int:
+    def _run_main(
+        self, decide_dir: pathlib.Path, out: pathlib.Path, extra_env: dict | None = None
+    ) -> int:
         def fake_fetch_feed(feed_repo, server, year, week, dest):
             shutil.copy(_FIXTURE_PATH, dest)
 
@@ -889,9 +940,10 @@ class MainDecideIntegrationTests(unittest.TestCase):
                 "--categories", "microbiology",
                 "--output-dir", str(out),
             ]
+            env = {"RXIV_EVAL_DECIDE_DIR": str(decide_dir), **(extra_env or {})}
             with (
                 patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed),
-                patch.dict(os.environ, {"RXIV_EVAL_DECIDE_DIR": str(decide_dir)}),
+                patch.dict(os.environ, env),
             ):
                 return eval_papers.main()
         finally:
@@ -917,6 +969,80 @@ class MainDecideIntegrationTests(unittest.TestCase):
             # microbiology rows in feed-min.csv (3, per OfflineEndToEndTests) all
             # answered "act"/True -> every one of them is relevant AND decided.
             self.assertIn("Relevant (LLM YES): 3", summary)
+
+    def test_decide_instructions_override_is_sent_formatted_with_topic(self) -> None:
+        # A custom DECIDE_INSTRUCTIONS template (with its own {topic}
+        # placeholder) must be what decide() actually receives — not
+        # DEFAULT_DECIDE_INSTRUCTIONS.
+        with (
+            tempfile.TemporaryDirectory() as decide_tmp,
+            tempfile.TemporaryDirectory() as out_tmp,
+        ):
+            decide_dir = pathlib.Path(decide_tmp)
+            capture_path = decide_dir / "captured_instructions.txt"
+            (decide_dir / "decide.py").write_text(
+                "def decide(state, questions, **kwargs):\n"
+                f"    open({str(capture_path)!r}, 'w').write(questions[0]['instructions'])\n"
+                "    return {q['name']: {'value': True, 'probability': 0.9, "
+                "'band': 'act', 'source': 'clef', 'error': None} for q in questions}\n"
+            )
+            out = pathlib.Path(out_tmp)
+            rc = self._run_main(
+                decide_dir, out,
+                extra_env={"DECIDE_INSTRUCTIONS": "Custom predicate about {topic}?"},
+            )
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(capture_path.read_text(), "Custom predicate about test topic?")
+
+    def test_warns_end_to_end_when_custom_relevance_prompt_has_no_decide_override(
+        self,
+    ) -> None:
+        with (
+            tempfile.TemporaryDirectory() as decide_tmp,
+            tempfile.TemporaryDirectory() as out_tmp,
+        ):
+            decide_dir = pathlib.Path(decide_tmp)
+            (decide_dir / "decide.py").write_text(
+                "def decide(state, questions, **kwargs):\n"
+                "    return {q['name']: {'value': True, 'probability': 0.9, "
+                "'band': 'act', 'source': 'clef', 'error': None} for q in questions}\n"
+            )
+            out = pathlib.Path(out_tmp)
+            stderr_capture = io.StringIO()
+            with patch("sys.stderr", stderr_capture):
+                rc = self._run_main(
+                    decide_dir, out, extra_env={"RELEVANCE_PROMPT": "a custom strict {topic}"}
+                )
+
+        self.assertEqual(rc, 0)
+        self.assertIn("::warning::", stderr_capture.getvalue())
+
+    def test_no_warning_end_to_end_when_decide_instructions_also_overridden(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as decide_tmp,
+            tempfile.TemporaryDirectory() as out_tmp,
+        ):
+            decide_dir = pathlib.Path(decide_tmp)
+            (decide_dir / "decide.py").write_text(
+                "def decide(state, questions, **kwargs):\n"
+                "    return {q['name']: {'value': True, 'probability': 0.9, "
+                "'band': 'act', 'source': 'clef', 'error': None} for q in questions}\n"
+            )
+            out = pathlib.Path(out_tmp)
+            stderr_capture = io.StringIO()
+            with patch("sys.stderr", stderr_capture):
+                rc = self._run_main(
+                    decide_dir,
+                    out,
+                    extra_env={
+                        "RELEVANCE_PROMPT": "a custom strict {topic}",
+                        "DECIDE_INSTRUCTIONS": "a matching custom predicate about {topic}",
+                    },
+                )
+
+        self.assertEqual(rc, 0)
+        self.assertNotIn("::warning::", stderr_capture.getvalue())
 
     def test_decide_dir_unset_never_imports_decide(self) -> None:
         # Default (no RXIV_EVAL_DECIDE_DIR): summary.md must not mention

@@ -1060,6 +1060,33 @@ def _warn_deprecated_env_vars() -> None:
         )
 
 
+def _warn_if_decide_ignores_custom_prompt(
+    decide_fn: Callable[..., dict[str, dict[str, Any]]] | None,
+    relevance_prompt_override: str | None,
+    decide_instructions_override: str | None,
+) -> None:
+    """Warn when decide() would judge papers by a different criterion than chat.
+
+    A custom `RELEVANCE_PROMPT` (the `relevance_prompt_template` input) only
+    changes the chat fallback's criterion — `DEFAULT_DECIDE_INSTRUCTIONS`
+    does not derive from it. Without a matching `DECIDE_INSTRUCTIONS`
+    override (the `decide_instructions` input), the decide() path would
+    silently keep judging papers against this workflow's own default
+    criterion, so the two paths could answer different questions for the
+    same paper. `::warning::` surfaces as a GitHub Actions log annotation on
+    either stdout or stderr.
+    """
+    if decide_fn is not None and relevance_prompt_override and not decide_instructions_override:
+        print(
+            "::warning::decide_enabled is set with a custom relevance_prompt_template "
+            "but no decide_instructions override — the decide() path judges papers "
+            "against this workflow's default criterion, not your custom prompt. Set "
+            "the decide_instructions input (same {topic} template) to keep both paths "
+            "consistent.",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
     """Drive the full pipeline: fetch, prefilter, classify, enrich, write artifacts."""
     _warn_deprecated_env_vars()
@@ -1094,14 +1121,21 @@ def main() -> int:
     papers = _keyword_prefilter(papers, args.topic, args.max_llm_calls)
     after_keyword_filter = len(papers)
 
-    relevance_prompt = (os.environ.get("RELEVANCE_PROMPT") or DEFAULT_RELEVANCE_PROMPT).format(
+    relevance_prompt_override = os.environ.get("RELEVANCE_PROMPT")
+    relevance_prompt = (relevance_prompt_override or DEFAULT_RELEVANCE_PROMPT).format(
         topic=args.topic
     )
     decide_settings = Settings()
     decide_fn = (
         _load_decide(Path(decide_settings.decide_dir)) if decide_settings.decide_dir else None
     )
-    decide_instructions = DEFAULT_DECIDE_INSTRUCTIONS.format(topic=args.topic)
+    decide_instructions_override = os.environ.get("DECIDE_INSTRUCTIONS")
+    decide_instructions = (decide_instructions_override or DEFAULT_DECIDE_INSTRUCTIONS).format(
+        topic=args.topic
+    )
+    _warn_if_decide_ignores_custom_prompt(
+        decide_fn, relevance_prompt_override, decide_instructions_override
+    )
     relevant, call_failures, decide_count = _run_relevance_pass(
         papers,
         model=args.model,

@@ -127,13 +127,27 @@ on:
           number — GitHub Actions' typed `number` input has bitten this
           repo before with workflow_dispatch coercion; a plain string avoids
           the question entirely and the script parses it as a float).
-          0.75 is a reasonable starting point for the `clef` model on a
-          generic yes/no paper-relevance predicate (owner-provided,
-          in-sample calibration, 2026-11-11) — it was NOT calibrated
-          against this workflow's own category/topic wording, so tune it
-          if a run's decide-vs-chat split looks off for your topic.
+          0.75 is a starting point for the `clef` model from a separate,
+          in-sample calibration run (100 arXiv papers, agent-assigned
+          labels, threshold picked with a <=5% error-rate rule on acted
+          items) that used a stricter relevance criterion than this
+          workflow's own default prompt — it was NOT calibrated against
+          `decide_instructions` below. Tune it if a run's decide-vs-chat
+          split looks off for your topic.
         type: string
         default: "0.75"
+      decide_instructions:
+        description: >-
+          Override decide()'s relevance-predicate instructions (a {topic}
+          template, same placeholder as relevance_prompt_template). Empty
+          (default) uses this workflow's own default criterion, phrased as
+          a predicate question — which will NOT match a custom
+          relevance_prompt_template. Set this whenever you also set
+          relevance_prompt_template and decide_enabled, so both paths judge
+          papers the same way; otherwise the script logs a GitHub Actions
+          warning annotation when it detects the mismatch.
+        type: string
+        default: ""
     secrets:
       llm-api-base:
         description: >-
@@ -244,6 +258,7 @@ jobs:
           INPUT_DECIDE_BACKEND: ${{ inputs.decide_backend }}
           INPUT_DECIDE_MODEL: ${{ inputs.decide_model }}
           INPUT_DECIDE_HI: ${{ inputs.decide_hi }}
+          INPUT_DECIDE_INSTRUCTIONS: ${{ inputs.decide_instructions }}
         run: |
           set -euo pipefail
           if [[ -n "$INPUT_DEPRECATED_RELEVANCE_PROMPT" ]]; then
@@ -275,6 +290,7 @@ jobs:
             export RXIV_EVAL_DECIDE_BACKEND="$INPUT_DECIDE_BACKEND"
             export RXIV_EVAL_DECIDE_MODEL="$INPUT_DECIDE_MODEL"
             export RXIV_EVAL_DECIDE_HI="$INPUT_DECIDE_HI"
+            [[ -n "$INPUT_DECIDE_INSTRUCTIONS" ]] && export DECIDE_INSTRUCTIONS="$INPUT_DECIDE_INSTRUCTIONS"
             # decide()'s own env var names (its clef backend reads these
             # directly, independent of this script's RXIV_EVAL_* convention)
             # — reusing the same api_base/llm-api-key the chat fallback uses
