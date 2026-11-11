@@ -2,14 +2,20 @@ name: Evaluate rxiv papers (dispatch + self-test)
 
 # Dual-purpose wrapper around the reusable `eval-papers.yaml`:
 #   - workflow_dispatch: the manual UI dispatcher for ad-hoc smokes.
-#   - schedule + pull_request: the eval-pipeline self-test (#14). Each run
-#     drops a tracking comment on issue #14 so row-count / category-survivor /
-#     verdict drift is visible across runs.
+#   - schedule: the eval-pipeline self-test (#14). Each run drops a tracking
+#     comment on issue #14 so row-count / category-survivor / verdict drift
+#     is visible across runs. There is no pull_request trigger here — see
+#     the `schedule:` block below for why.
 #
 # The wrapper explicitly passes eval_repo + eval_ref (lines 104-105).
 # Auto-derivation via `github.workflow_ref` / `github.workflow_sha` was
 # reverted in v0.2.1 — those variables resolve to the CALLER's workflow,
 # not this one.
+#
+# Provider: Cloudflare Workers AI, via secrets CF_WORKERS_AI_TOKEN and
+# LLM_BASE_URL (both must be set as repo secrets for this workflow's own
+# scheduled/manual runs to produce a real verdict — GitHub Models, the
+# previous default, was fully retired 2026-07-30; see docs/design.md).
 
 on:
   workflow_dispatch:
@@ -49,9 +55,9 @@ on:
         type: number
         default: 0
       model:
-        description: "GitHub Models model id."
+        description: "Cloudflare Workers AI model id."
         type: string
-        default: openai/gpt-4o-mini
+        default: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       enrich:
         description: "Run the extraction prompt on the producer-supplied abstract per YES verdict."
         type: boolean
@@ -71,7 +77,6 @@ on:
 
 permissions:
   contents: read
-  models: read
   issues: write
 
 concurrency:
@@ -83,10 +88,9 @@ jobs:
     uses: ./.github/workflows/eval-papers.yaml
     permissions:
       contents: read
-      models: read
     with:
-      # `inputs.*` is null for schedule and pull_request events; the `||`
-      # fallbacks give those triggers the self-test baseline (#14).
+      # `inputs.*` is null for the schedule event; the `||` fallbacks give
+      # it the self-test baseline (#14).
       topic: ${{ inputs.topic || 'defensive drug discovery, antimicrobial peptide (AMP) design, molecular dynamics, structure-based design and docking' }}
       server: ${{ inputs.server || 'biorxiv' }}
       year: ${{ inputs.year || '' }}
@@ -101,7 +105,7 @@ jobs:
       # the runtime behavior contradicts the warning, so it's left as-is.
       max_papers: ${{ fromJSON(inputs.max_papers || '50') }}
       max_llm_calls: ${{ fromJSON(inputs.max_llm_calls || '0') }}
-      model: ${{ inputs.model || 'openai/gpt-4o-mini' }}
+      model: ${{ inputs.model || '@cf/meta/llama-3.3-70b-instruct-fp8-fast' }}
       enrich: ${{ fromJSON(inputs.enrich || 'true') }}
       feed_repo: ${{ inputs.feed_repo || '' }}
       # In-repo caller: eval_repo defaults to qte77/gha-rxiv-paper-eval (the
@@ -111,6 +115,13 @@ jobs:
       # workflow version triggering this run.
       eval_repo: ${{ github.repository }}
       eval_ref: ${{ github.sha }}
+    secrets:
+      llm-api-key: ${{ secrets.CF_WORKERS_AI_TOKEN }}
+      # The base URL embeds a Cloudflare account id, so it travels through
+      # the `secrets:` keyword (a reusable workflow's `with:` cannot read
+      # the `secrets` context at all — actionlint catches this) rather than
+      # as a plain `api_base` input.
+      llm-api-base: ${{ secrets.LLM_BASE_URL }}
 
   comment:
     # Post a tracking comment on #14 after each scheduled run so row-count /
