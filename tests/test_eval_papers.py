@@ -161,12 +161,219 @@ class IsRelevantTests(unittest.TestCase):
             result = eval_papers.is_relevant(
                 paper, abstract, model="openai/gpt-4o-mini", system_prompt="sys"
             )
-        self.assertTrue(result)
+        self.assertTrue(result.relevant)
+        self.assertEqual(result.decided_by, "chat")
         body = json.loads(mock_urlopen.call_args.args[0].data)
         user_msg = next(m["content"] for m in body["messages"] if m["role"] == "user")
         self.assertIn(paper.title, user_msg)
         self.assertIn(paper.category, user_msg)
         self.assertIn(abstract, user_msg)
+
+
+# ---------------------------------------------------------------------------
+# DecideIntegrationTests
+# ---------------------------------------------------------------------------
+
+
+def _fake_decide(band: str, *, value=True, probability=0.9, source="clef", error=None):
+    """Build a fake `decide()` callable returning one fixed answer.
+
+    Mirrors the real `decide()` signature/return shape
+    (`decide(state, questions, backend=..., model=..., hi=..., timeout=...)
+    -> {name: {value, probability, band, source, error}}`) without any
+    network call, per decide.py's own documented contract that it never
+    raises for a backend/network failure.
+    """
+    calls: list[dict] = []
+
+    def fake(state, questions, **kwargs):
+        calls.append({"state": state, "questions": questions, **kwargs})
+        name = questions[0]["name"]
+        return {
+            name: {
+                "value": value,
+                "probability": probability,
+                "band": band,
+                "source": source,
+                "error": error,
+            }
+        }
+
+    fake.calls = calls
+    return fake
+
+
+class DecideIntegrationTests(unittest.TestCase):
+    """`is_relevant` routes the relevance predicate through decide() first
+    when `decide_fn` is given. An "act" band (either tail) is used directly
+    and skips the chat call entirely; "review"/"escalate" (or no `decide_fn`)
+    falls back to the existing chat YES/NO call.
+    """
+
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"GH_TOKEN": "fake-token"})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _paper(self) -> eval_papers.Paper:
+        return eval_papers.Paper(
+            date="2026-05-04",
+            iso_week="19",
+            doi="10.64898/2026.05.01.000002",
+            version="1",
+            category="biophysics",
+            title="A paper about process Y",
+            authors="Doe, J.",
+        )
+
+    def test_act_band_yes_uses_decide_value_without_chat_call(self) -> None:
+        decide_fn = _fake_decide("act", value=True, probability=0.95, source="clef")
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("chat must not be called on an act band"),
+        ):
+            verdict = eval_papers.is_relevant(
+                self._paper(),
+                "abstract",
+                model="m",
+                system_prompt="sys",
+                decide_fn=decide_fn,
+                decide_instructions="Is this relevant to: topic?",
+            )
+        self.assertTrue(verdict.relevant)
+        self.assertEqual(verdict.decided_by, "clef")
+        self.assertEqual(verdict.probability, 0.95)
+
+    def test_act_band_confident_no_is_used_without_chat_call(self) -> None:
+        # Both tails of a predicate act (symmetric gate) — a confident NO is
+        # as actionable as a confident YES and must also skip chat.
+        decide_fn = _fake_decide("act", value=False, probability=0.04, source="clef")
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("chat must not be called on an act band"),
+        ):
+            verdict = eval_papers.is_relevant(
+                self._paper(),
+                "abstract",
+                model="m",
+                system_prompt="sys",
+                decide_fn=decide_fn,
+                decide_instructions="Is this relevant to: topic?",
+            )
+        self.assertFalse(verdict.relevant)
+        self.assertEqual(verdict.decided_by, "clef")
+        self.assertEqual(verdict.probability, 0.04)
+
+    def test_review_band_falls_back_to_chat(self) -> None:
+        decide_fn = _fake_decide("review", value=True, probability=0.6)
+        with patch("urllib.request.urlopen", return_value=_yes_response()) as mock_open:
+            verdict = eval_papers.is_relevant(
+                self._paper(),
+                "abstract",
+                model="m",
+                system_prompt="sys",
+                decide_fn=decide_fn,
+                decide_instructions="Is this relevant to: topic?",
+            )
+        self.assertEqual(mock_open.call_count, 1)
+        self.assertEqual(verdict.decided_by, "chat")
+        self.assertIsNone(verdict.probability)
+
+    def test_escalate_band_falls_back_to_chat(self) -> None:
+        decide_fn = _fake_decide(
+            "escalate", value=None, probability=None, error="missing CF_WORKERS_AI_TOKEN"
+        )
+        with patch("urllib.request.urlopen", return_value=_no_response()) as mock_open:
+            verdict = eval_papers.is_relevant(
+                self._paper(),
+                "abstract",
+                model="m",
+                system_prompt="sys",
+                decide_fn=decide_fn,
+                decide_instructions="Is this relevant to: topic?",
+            )
+        self.assertEqual(mock_open.call_count, 1)
+        self.assertEqual(verdict.decided_by, "chat")
+
+    def test_no_decide_fn_goes_straight_to_chat(self) -> None:
+        # Default (decide_fn=None): behavior is byte-for-byte what it was
+        # before decide() existed — the opt-in default.
+        with patch("urllib.request.urlopen", return_value=_yes_response()) as mock_open:
+            verdict = eval_papers.is_relevant(
+                self._paper(), "abstract", model="m", system_prompt="sys"
+            )
+        self.assertEqual(mock_open.call_count, 1)
+        self.assertEqual(verdict.decided_by, "chat")
+
+    def test_decide_cache_hit_skips_both_decide_and_chat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            paper = self._paper()
+            decide_fn = _fake_decide("act", value=True, probability=0.95, source="clef")
+            with patch("urllib.request.urlopen", side_effect=AssertionError("no chat")):
+                eval_papers.is_relevant(
+                    paper, "abstract", model="m", system_prompt="sys", output_dir=out,
+                    decide_fn=decide_fn, decide_instructions="q?",
+                )
+            self.assertEqual(len(decide_fn.calls), 1)
+
+            def exploding_decide(*a, **kw):
+                raise AssertionError("decide must not be called on cache hit")
+
+            with patch("urllib.request.urlopen", side_effect=AssertionError("no chat")):
+                cached = eval_papers.is_relevant(
+                    paper, "abstract", model="m", system_prompt="sys", output_dir=out,
+                    decide_fn=exploding_decide, decide_instructions="q?",
+                )
+        self.assertEqual(cached.decided_by, "clef")
+
+    def test_decide_verdict_sends_predicate_question_and_state(self) -> None:
+        decide_fn = _fake_decide("act", value=True)
+        eval_papers._decide_verdict(
+            decide_fn,
+            "Title: X\n\nAbstract: Y",
+            instructions="Is this relevant to: Z?",
+            backend="clef",
+            model="clef",
+            hi=0.75,
+            timeout=30.0,
+        )
+        self.assertEqual(len(decide_fn.calls), 1)
+        call = decide_fn.calls[0]
+        self.assertEqual(call["state"], "Title: X\n\nAbstract: Y")
+        self.assertEqual(
+            call["questions"],
+            [{"name": "relevant", "type": "predicate", "instructions": "Is this relevant to: Z?"}],
+        )
+        self.assertEqual(call["backend"], "clef")
+        self.assertEqual(call["model"], "clef")
+        self.assertEqual(call["hi"], 0.75)
+        self.assertEqual(call["timeout"], 30.0)
+
+
+class LoadDecideTests(unittest.TestCase):
+    """`_load_decide` imports `decide()` from a checkout directory without
+    installing a package or mutating `sys.path`.
+    """
+
+    def test_imports_decide_function_from_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            decide_dir = pathlib.Path(tmpdir)
+            (decide_dir / "decide.py").write_text(
+                "def decide(state, questions, **kwargs):\n"
+                "    return {q['name']: {'value': True, 'probability': 1.0, "
+                "'band': 'act', 'source': 'fake', 'error': None} for q in questions}\n"
+            )
+            decide_fn = eval_papers._load_decide(decide_dir)
+            result = decide_fn("state", [{"name": "relevant", "type": "predicate"}])
+        self.assertEqual(result["relevant"]["band"], "act")
+
+    def test_missing_decide_py_raises_systemexit(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            self.assertRaises(SystemExit),
+        ):
+            eval_papers._load_decide(pathlib.Path(tmpdir) / "nonexistent")
 
 
 def _http_error(code: int) -> urllib.error.HTTPError:
@@ -498,7 +705,7 @@ class DoiCacheTests(unittest.TestCase):
                     system_prompt="sys",
                     output_dir=out,
                 )
-            self.assertTrue(result1)
+            self.assertTrue(result1.relevant)
             self.assertEqual(mock_open.call_count, 1)
 
             # Cache file must exist
@@ -545,7 +752,7 @@ class DoiCacheTests(unittest.TestCase):
                 result2 = eval_papers.is_relevant(
                     paper, "abstract", model="m", system_prompt="sys", output_dir=out
                 )
-            self.assertFalse(result2)  # got the new NO response
+            self.assertFalse(result2.relevant)  # got the new NO response
             self.assertEqual(mock_open2.call_count, 1)
 
     def test_cache_per_doi(self) -> None:
@@ -640,6 +847,105 @@ class OfflineEndToEndTests(unittest.TestCase):
             lines = relevant_csv.read_text().splitlines()
             self.assertGreater(len(lines), 0)
             self.assertIn("DOI", lines[0])
+
+
+# ---------------------------------------------------------------------------
+# MainDecideIntegrationTests
+# ---------------------------------------------------------------------------
+
+
+class MainDecideIntegrationTests(unittest.TestCase):
+    """End-to-end: `main()` wires `RXIV_EVAL_DECIDE_DIR` into a real
+    `_load_decide` import (a tiny on-disk fake `decide.py`, no mocking of
+    `is_relevant`/`_run_relevance_pass` internals) and the result shows up
+    in `summary.md`.
+    """
+
+    def setUp(self) -> None:
+        self._env = patch.dict(
+            os.environ,
+            {
+                "GH_TOKEN": "fake-token",
+                "RXIV_EVAL_OFFLINE": "1",
+                "RXIV_EVAL_STUB_MODE": "yes",
+                "RXIV_EVAL_RETRY_BASE_SECS": "0.01",
+                "RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0",
+            },
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def _run_main(self, decide_dir: pathlib.Path, out: pathlib.Path) -> int:
+        def fake_fetch_feed(feed_repo, server, year, week, dest):
+            shutil.copy(_FIXTURE_PATH, dest)
+
+        saved_argv = sys.argv[:]
+        try:
+            sys.argv = [
+                "eval_papers.py",
+                "--feed-repo", "any/repo",
+                "--topic", "test topic",
+                "--week", "15",
+                "--categories", "microbiology",
+                "--output-dir", str(out),
+            ]
+            with (
+                patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed),
+                patch.dict(os.environ, {"RXIV_EVAL_DECIDE_DIR": str(decide_dir)}),
+            ):
+                return eval_papers.main()
+        finally:
+            sys.argv = saved_argv
+
+    def test_decide_dir_set_routes_relevance_through_decide_and_reports_it(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as decide_tmp,
+            tempfile.TemporaryDirectory() as out_tmp,
+        ):
+            decide_dir = pathlib.Path(decide_tmp)
+            (decide_dir / "decide.py").write_text(
+                "def decide(state, questions, **kwargs):\n"
+                "    return {q['name']: {'value': True, 'probability': 0.99, "
+                "'band': 'act', 'source': 'clef', 'error': None} for q in questions}\n"
+            )
+            out = pathlib.Path(out_tmp)
+            rc = self._run_main(decide_dir, out)
+
+            self.assertEqual(rc, 0)
+            summary = (out / "summary.md").read_text()
+            self.assertIn("Decided via decide():", summary)
+            # microbiology rows in feed-min.csv (3, per OfflineEndToEndTests) all
+            # answered "act"/True -> every one of them is relevant AND decided.
+            self.assertIn("Relevant (LLM YES): 3", summary)
+
+    def test_decide_dir_unset_never_imports_decide(self) -> None:
+        # Default (no RXIV_EVAL_DECIDE_DIR): summary.md must not mention
+        # decide() at all — the opt-in default leaves existing callers
+        # byte-for-byte unaffected.
+        with tempfile.TemporaryDirectory() as out_tmp:
+            out = pathlib.Path(out_tmp)
+
+            def fake_fetch_feed(feed_repo, server, year, week, dest):
+                shutil.copy(_FIXTURE_PATH, dest)
+
+            saved_argv = sys.argv[:]
+            try:
+                sys.argv = [
+                    "eval_papers.py",
+                    "--feed-repo", "any/repo",
+                    "--topic", "test topic",
+                    "--week", "15",
+                    "--categories", "microbiology",
+                    "--output-dir", str(out),
+                ]
+                with patch.object(eval_papers, "fetch_feed", side_effect=fake_fetch_feed):
+                    rc = eval_papers.main()
+            finally:
+                sys.argv = saved_argv
+
+            self.assertEqual(rc, 0)
+            summary = (out / "summary.md").read_text()
+            self.assertNotIn("decide()", summary)
 
 
 # ---------------------------------------------------------------------------
@@ -905,18 +1211,18 @@ class RunRelevancePassTests(unittest.TestCase):
         papers = self._papers(5)
         call_count = {"n": 0}
 
-        def fake_is_relevant(paper, abstract, *, model, system_prompt, output_dir=None):
+        def fake_is_relevant(paper, abstract, *, model, system_prompt, output_dir=None, **kw):
             call_count["n"] += 1
             if call_count["n"] in (2, 4):
                 raise RuntimeError("simulated 429")
-            return True
+            return eval_papers.Verdict(doi=paper.doi, relevant=True, raw="YES")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             out = pathlib.Path(tmpdir)
             with (
                 patch.object(eval_papers, "is_relevant", side_effect=fake_is_relevant),
             ):
-                relevant, call_failures = eval_papers._run_relevance_pass(
+                relevant, call_failures, decide_count = eval_papers._run_relevance_pass(
                     papers,
                     model="openai/gpt-4o-mini",
                     relevance_prompt="sys",
@@ -925,15 +1231,17 @@ class RunRelevancePassTests(unittest.TestCase):
 
         self.assertEqual(len(relevant), 3)
         self.assertEqual(call_failures, 2)
+        self.assertEqual(decide_count, 0)
 
     def test_zero_failures_when_all_calls_succeed(self) -> None:
         papers = self._papers(3)
+        fake_verdict = eval_papers.Verdict(doi="x", relevant=True, raw="YES")
         with tempfile.TemporaryDirectory() as tmpdir:
             out = pathlib.Path(tmpdir)
             with (
-                patch.object(eval_papers, "is_relevant", return_value=True),
+                patch.object(eval_papers, "is_relevant", return_value=fake_verdict),
             ):
-                relevant, call_failures = eval_papers._run_relevance_pass(
+                relevant, call_failures, decide_count = eval_papers._run_relevance_pass(
                     papers,
                     model="openai/gpt-4o-mini",
                     relevance_prompt="sys",
@@ -941,6 +1249,32 @@ class RunRelevancePassTests(unittest.TestCase):
                 )
         self.assertEqual(len(relevant), 3)
         self.assertEqual(call_failures, 0)
+        self.assertEqual(decide_count, 0)
+
+    def test_counts_decide_answered_papers_separately_from_chat(self) -> None:
+        # decide() answered 2 papers directly (decided_by != "chat"); the
+        # 3rd fell back to chat. decide_count must only count the former —
+        # driven purely by each returned Verdict.decided_by, not by whether
+        # decide_fn was passed in (is_relevant is mocked here, so decide_fn
+        # is never actually invoked).
+        papers = self._papers(3)
+        verdicts = [
+            eval_papers.Verdict(doi="a", relevant=True, raw="decide:True", decided_by="clef"),
+            eval_papers.Verdict(doi="b", relevant=False, raw="decide:False", decided_by="clef"),
+            eval_papers.Verdict(doi="c", relevant=True, raw="YES", decided_by="chat"),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            with patch.object(eval_papers, "is_relevant", side_effect=verdicts):
+                relevant, call_failures, decide_count = eval_papers._run_relevance_pass(
+                    papers,
+                    model="openai/gpt-4o-mini",
+                    relevance_prompt="sys",
+                    output_dir=out,
+                )
+        self.assertEqual(len(relevant), 2)
+        self.assertEqual(call_failures, 0)
+        self.assertEqual(decide_count, 2)
 
     def test_sleeps_between_calls_at_configured_interval(self) -> None:
         # 5 papers -> 4 sleeps (between, not after the last). The interval is
@@ -948,11 +1282,12 @@ class RunRelevancePassTests(unittest.TestCase):
         # rate limits without forking the script.
         papers = self._papers(5)
         sleep_calls: list[float] = []
+        fake_verdict = eval_papers.Verdict(doi="x", relevant=True, raw="YES")
         with tempfile.TemporaryDirectory() as tmpdir:
             out = pathlib.Path(tmpdir)
             with (
                 patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "0.5"}),
-                patch.object(eval_papers, "is_relevant", return_value=True),
+                patch.object(eval_papers, "is_relevant", return_value=fake_verdict),
                 patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
             ):
                 eval_papers._run_relevance_pass(
@@ -967,11 +1302,12 @@ class RunRelevancePassTests(unittest.TestCase):
         # 1 paper -> 0 throttle sleeps (no inter-call gap to bridge).
         papers = self._papers(1)
         sleep_calls: list[float] = []
+        fake_verdict = eval_papers.Verdict(doi="x", relevant=True, raw="YES")
         with tempfile.TemporaryDirectory() as tmpdir:
             out = pathlib.Path(tmpdir)
             with (
                 patch.dict(os.environ, {"RXIV_EVAL_LLM_CALL_INTERVAL_SECS": "9.9"}),
-                patch.object(eval_papers, "is_relevant", return_value=True),
+                patch.object(eval_papers, "is_relevant", return_value=fake_verdict),
                 patch("time.sleep", side_effect=lambda s: sleep_calls.append(s)),
             ):
                 eval_papers._run_relevance_pass(
@@ -1051,6 +1387,41 @@ class WriteSummaryFailureRateTests(unittest.TestCase):
             content = (out / "summary.md").read_text()
             self.assertNotIn("LLM call failures", content)
 
+    def test_omits_decide_line_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_summary(
+                out, server="biorxiv", year="2026", week="15", topic="anything",
+                total=5, after_prefilter=5, relevant=[],
+            )
+            content = (out / "summary.md").read_text()
+            self.assertNotIn("Decided via decide()", content)
+
+    def test_emits_decide_line_when_enabled_even_at_zero_count(self) -> None:
+        # decide_enabled must show the line even when decide_count is 0 (every
+        # call landed in review/escalate) — visibility into "it ran but never
+        # acted" matters as much as the count itself.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_summary(
+                out, server="biorxiv", year="2026", week="15", topic="anything",
+                total=5, after_prefilter=5, relevant=[],
+                decide_enabled=True, decide_count=0,
+            )
+            content = (out / "summary.md").read_text()
+            self.assertIn("Decided via decide(): 0 / 5", content)
+
+    def test_emits_decide_line_with_nonzero_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_summary(
+                out, server="biorxiv", year="2026", week="15", topic="anything",
+                total=10, after_prefilter=10, relevant=[],
+                decide_enabled=True, decide_count=7,
+            )
+            content = (out / "summary.md").read_text()
+            self.assertIn("Decided via decide(): 7 / 10", content)
+
     def test_partial_failure_rate_rounds_to_nearest_percent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             out = pathlib.Path(tmpdir)
@@ -1107,7 +1478,7 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
 
     def _run_main_with_fixture(
         self, num_papers: int, num_failures: int, max_llm_calls: int = 0,
-        summary: dict | None = None,
+        summary: dict | None = None, categories: str = "microbiology",
     ) -> int:
         """Run `main()` against an inline `num_papers`-row feed, with
         `is_relevant` raising on the first `num_failures` papers.
@@ -1123,7 +1494,7 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
                 call_count["n"] += 1
                 if call_count["n"] <= num_failures:
                     raise RuntimeError("simulated 429")
-                return True
+                return eval_papers.Verdict(doi=paper.doi, relevant=True, raw="YES")
 
             def fake_fetch_feed(feed_repo, server, year, week, dest):
                 pass  # feed.csv already written above
@@ -1134,7 +1505,7 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
                     "eval_papers.py",
                     "--feed-repo", "any/repo",
                     "--topic", "test topic",
-                    "--categories", "microbiology",
+                    "--categories", categories,
                     "--max-papers", "0",
                     "--week", "15",  # explicit -> skip live feed discovery
                     "--output-dir", str(out),
@@ -1161,9 +1532,27 @@ class MainExitCodeFailureRateTests(unittest.TestCase):
         rc = self._run_main_with_fixture(num_papers=4, num_failures=2)
         self.assertEqual(rc, 0)
 
-    def test_returns_zero_on_zero_papers(self) -> None:
-        # empty feed after prefilter -> must not raise ZeroDivisionError
+    def test_returns_nonzero_when_feed_has_zero_total_rows(self) -> None:
+        # The feed CSV itself has 0 rows *before* any filtering — likely an
+        # empty/not-yet-published producer week or a fetch gone wrong, not a
+        # true negative. Must fail loudly (a distinct exit code) instead of
+        # succeeding silently as "0/0 relevant" indistinguishable from a
+        # legitimately quiet week.
         rc = self._run_main_with_fixture(num_papers=0, num_failures=0)
+        self.assertEqual(rc, 3)
+
+    def test_returns_zero_when_category_filter_legitimately_empties_nonzero_feed(
+        self,
+    ) -> None:
+        # 5 rows loaded (total > 0), but none match the category filter ->
+        # after_prefilter == 0. This IS a legitimate true negative (nothing
+        # in this week's feed matched), so it must stay rc == 0 and must not
+        # raise ZeroDivisionError — the no-ZeroDivisionError guarantee the
+        # old (now-renamed) zero-papers test protected, now that "total == 0"
+        # on its own is a separate failure (see the test above).
+        rc = self._run_main_with_fixture(
+            num_papers=5, num_failures=0, categories="nonexistent-category",
+        )
         self.assertEqual(rc, 0)
 
     def test_all_calls_failed_under_keyword_cap_returns_nonzero(self) -> None:
