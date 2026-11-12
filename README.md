@@ -57,6 +57,10 @@ copy-paste.
 - [`docs/usage.md`](docs/usage.md)
 - [`docs/design.md`](docs/design.md)
 - [`docs/llm-providers.md`](docs/llm-providers.md)
+- [Decision-model conventions][decide-conventions] — when the `decide()`
+  gate is used, defaults, shadow-first rollout, secret names
 - [`examples/`](examples/)
 - [`CHANGELOG.md`](CHANGELOG.md)
 - [`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action)
+
+[decide-conventions]: https://github.com/qte77/.github/blob/main/actions/decide/CONVENTIONS.md
