@@ -198,18 +198,18 @@ jobs:
         # both `github.workflow_ref` and `github.workflow_sha` resolve to
         # the CALLER's workflow. Caller MUST pass `eval_ref` matching the
         # `uses: @<ref>` pin so the script version aligns.
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: ${{ inputs.eval_repo }}
           ref: ${{ inputs.eval_ref }}
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: ${{ inputs.python_version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
 
@@ -222,7 +222,7 @@ jobs:
         # this checkout (see `_load_decide`). Pinned by commit SHA: that repo
         # has no tags.
         if: ${{ inputs.decide_enabled }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: qte77/.github
           ref: 43ad1211e962f82fab823377dcc7272054d8196c  # main 2026-11-10 (clef backend since #47)
@@ -303,7 +303,7 @@ jobs:
           cat output/.workflow_outputs >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ steps.run.outputs.artifact_name }}
           path: output/
