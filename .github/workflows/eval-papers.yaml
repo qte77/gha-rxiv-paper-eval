@@ -198,7 +198,7 @@ jobs:
         # both `github.workflow_ref` and `github.workflow_sha` resolve to
         # the CALLER's workflow. Caller MUST pass `eval_ref` matching the
         # `uses: @<ref>` pin so the script version aligns.
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: ${{ inputs.eval_repo }}
           ref: ${{ inputs.eval_ref }}
@@ -222,7 +222,7 @@ jobs:
         # this checkout (see `_load_decide`). Pinned by commit SHA: that repo
         # has no tags.
         if: ${{ inputs.decide_enabled }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: qte77/.github
           ref: 43ad1211e962f82fab823377dcc7272054d8196c  # main 2026-11-10 (clef backend since #47)
