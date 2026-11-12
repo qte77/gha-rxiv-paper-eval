@@ -6,6 +6,10 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+- **`.github/dependabot.yml`.** Weekly `github-actions` and `uv` updates, each grouped into
+  `*-security-updates` and `*-version-updates` (minor/patch only, so majors stay as separate PRs).
+
 ## [0.6.0] - 2026-11-11
 
 ### Added
