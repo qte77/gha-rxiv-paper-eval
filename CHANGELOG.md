@@ -15,6 +15,10 @@ entries are PR-scoped.
 - **`.github/dependabot.yml`.** Weekly `github-actions` and `uv` updates, each grouped into
   `*-security-updates` and `*-version-updates` (minor/patch only, so majors stay as separate PRs).
 
+### Changed
+- Release workflows re-pinned to `qte77/.github@a32769a` (main 2026-11-12, qte77/.github#64);
+  compatibility checked, no breaking input/output changes.
+
 ## [0.6.0] - 2026-11-11
 
 ### Added
