@@ -7,6 +7,11 @@ entries are PR-scoped.
 ## [Unreleased]
 
 ### Added
+
+- CodeQL workflow (`.github/workflows/codeql.yaml`) scanning `python`, `actions` on every
+  push, weekly and on demand; actions pinned to full commit SHAs.
+
+### Added
 - **`.github/dependabot.yml`.** Weekly `github-actions` and `uv` updates, each grouped into
   `*-security-updates` and `*-version-updates` (minor/patch only, so majors stay as separate PRs).
 
