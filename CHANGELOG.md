@@ -6,6 +6,14 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Extraction replies in a ```json fence were dropped.** `extract_fields()` parsed strictly, so a
+  reply wrapped in a code fence (or with a raw newline inside a string) failed, landed in `_raw`
+  with empty fields, and was still logged `extract OK`. It now strips the fence and parses with
+  `strict=False`; a reply that still fails is logged `extract PARSE-FAILED`. In ai-agents-research
+  this affected 1,342 of 1,946 stored records since 2026 W26.
+
 ### Added
 
 - CodeQL workflow (`.github/workflows/codeql.yaml`) scanning `python`, `actions` on every

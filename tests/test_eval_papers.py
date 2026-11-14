@@ -2051,5 +2051,30 @@ class PermanentHttpErrorTests(unittest.TestCase):
         self.assertIn("models.github.ai", str(ctx.exception))
 
 
+class ExtractFieldsFenceTests(unittest.TestCase):
+    """Models often wrap JSON in a ```json fence; the parser must accept it."""
+
+    def _extract(self, raw: str):
+        with patch.object(eval_papers, "gh_models_rest", return_value=raw):
+            return eval_papers.extract_fields("an abstract", model="m", system_prompt="p")
+
+    def test_parses_fenced_json(self) -> None:
+        ef = self._extract('```json\n{"summary": "S", "methods": ["m1"]}\n```')
+        self.assertEqual(ef.summary, "S")
+        self.assertEqual(ef.methods, ["m1"])
+        self.assertNotIn("_raw", ef.model_dump())
+
+    def test_parses_bare_fence(self) -> None:
+        self.assertEqual(self._extract('```\n{"summary": "S"}\n```').summary, "S")
+
+    def test_tolerates_raw_newline_in_string(self) -> None:
+        self.assertEqual(self._extract('{"summary": "a\nb"}').summary, "a\nb")
+
+    def test_unparseable_reply_kept_as_raw(self) -> None:
+        ef = self._extract('```json\n{"summary": not quoted}\n```')
+        self.assertEqual(ef.summary, "")
+        self.assertIn("_raw", ef.model_dump())
+
+
 if __name__ == "__main__":
     unittest.main()

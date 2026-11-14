@@ -776,15 +776,31 @@ def _urlopen_bytes(
         return resp.read()
 
 
+_JSON_FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*\n?(?P<body>.*?)\n?\s*```\s*$", re.DOTALL)
+
+
+def _parse_extraction(raw: str) -> ExtractedFields:
+    """Parse a model reply into fields; keep it under ``_raw`` when unparseable.
+
+    Reason: chat models often wrap JSON in a ```json fence and put raw newlines
+    inside strings; a strict parse then dropped every field (2026 W26 onwards).
+    """
+    m = _JSON_FENCE_RE.match(raw)
+    try:
+        data = json.loads(m.group("body") if m else raw, strict=False)
+        if not isinstance(data, dict):
+            raise ValueError("extraction reply is not a JSON object")
+        return ExtractedFields.model_validate(data)
+    except (ValueError, ValidationError):
+        return ExtractedFields.model_validate({"_raw": raw})
+
+
 def extract_fields(abstract: str, *, model: str, system_prompt: str) -> ExtractedFields:
     """Run the structured-extraction prompt and return parsed fields."""
     if not abstract:
         return ExtractedFields()
     raw = gh_models_rest(model, system_prompt, abstract, max_tokens=512)
-    try:
-        return ExtractedFields.model_validate_json(raw)
-    except ValidationError:
-        return ExtractedFields.model_validate({"_raw": raw})
+    return _parse_extraction(raw)
 
 
 def write_workflow_outputs(
@@ -1041,7 +1057,8 @@ def _run_extraction_pass(
                 )
                 fields = ExtractedFields()
             else:
-                print(f"[{i}/{total}] extract OK {paper.doi}", file=sys.stderr)
+                status = "PARSE-FAILED" if "_raw" in fields.model_dump() else "OK"
+                print(f"[{i}/{total}] extract {status} {paper.doi}", file=sys.stderr)
             record = {
                 **paper.model_dump(),
                 "extracted": fields.model_dump(),
