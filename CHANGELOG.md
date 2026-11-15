@@ -6,6 +6,8 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-15
+
 ### Fixed
 
 - **Extraction replies in a ```json fence were dropped.** `extract_fields()` parsed strictly, so a
