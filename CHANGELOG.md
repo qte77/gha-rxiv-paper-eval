@@ -11,6 +11,9 @@ entries are PR-scoped.
 - Release workflows (`publish-release`, `tag-release`) pinned to `qte77/.github` v0.1.1 in tag form
   (`@b4674e37…  # v0.1.1`) so Dependabot can follow qte77/.github releases (qte77/.github#44 pilot);
   the called workflow files are byte-identical to the previous pin.
+- `eval-papers.yaml`: the qte77/.github checkout for the decision gate moved from `43ad1211` (main 2026-11-10)
+  to the v0.1.2 release commit `aeef158f`; `actions/decide/decide.py` is byte-identical at both, and the stale
+  "that repo has no tags" comment is replaced.
 
 ## [0.6.1] - 2026-11-15
 
