@@ -6,6 +6,12 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Changed
+
+- Release workflows (`publish-release`, `tag-release`) pinned to `qte77/.github` v0.1.1 in tag form
+  (`@b4674e37…  # v0.1.1`) so Dependabot can follow qte77/.github releases (qte77/.github#44 pilot);
+  the called workflow files are byte-identical to the previous pin.
+
 ## [0.6.1] - 2026-11-15
 
 ### Fixed
