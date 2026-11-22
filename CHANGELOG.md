@@ -8,6 +8,8 @@ entries are PR-scoped.
 
 ### Changed
 
+- Claude Code `.claude/settings.json` sets `BASH_MAX_OUTPUT_LENGTH` to `15000` and
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` to `50` ([docs](https://code.claude.com/docs/en/env-vars))
 - Release workflows (`publish-release`, `tag-release`) pinned to `qte77/.github` v0.1.1 in tag form
   (`@b4674e37…  # v0.1.1`) so Dependabot can follow qte77/.github releases (qte77/.github#44 pilot);
   the called workflow files are byte-identical to the previous pin.
