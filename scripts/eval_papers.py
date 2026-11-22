@@ -812,7 +812,13 @@ def extract_fields(abstract: str, *, model: str, system_prompt: str) -> Extracte
     # Reason: about a third of W45 replies were near-JSON (an unquoted value,
     # a missing comma); one provider-neutral retry recovers most of them (#111).
     retry_prompt = f"{abstract}\n\n{_EXTRACTION_RETRY_NOTE}"
-    raw = gh_models_rest(model, system_prompt, retry_prompt, max_tokens=512)
+    try:
+        raw = gh_models_rest(model, system_prompt, retry_prompt, max_tokens=512)
+    except RuntimeError as exc:
+        # Reason: the first reply was unparseable; keep it so the paper still
+        # counts as a parse failure instead of an empty extraction.
+        print(f"WARN: extraction retry failed: {exc}", file=sys.stderr)
+        return fields
     return _parse_extraction(raw)
 
 
