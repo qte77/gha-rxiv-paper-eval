@@ -1496,6 +1496,13 @@ class ExtractFieldsRetryTests(unittest.TestCase):
         self.assertIn("_raw", ef.model_dump())
         self.assertEqual(mock_call.call_count, 2)
 
+    def test_retry_call_error_keeps_first_unparseable_reply(self) -> None:
+        # Reason: a failed retry call must still count as a parse failure,
+        # not as an empty extraction (#111 yield figure).
+        ef, mock_call = self._extract(['{"summary": not quoted}', RuntimeError("HTTP 500")])
+        self.assertIn("_raw", ef.model_dump())
+        self.assertEqual(mock_call.call_count, 2)
+
     def test_no_retry_when_first_reply_parses(self) -> None:
         ef, mock_call = self._extract(['{"summary": "S"}'])
         self.assertEqual(ef.summary, "S")
