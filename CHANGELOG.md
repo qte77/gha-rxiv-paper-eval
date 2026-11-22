@@ -6,6 +6,8 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-22
+
 ### Fixed
 
 - Extraction: when the retry call itself fails, the first unparseable reply is kept, so the paper still counts in "Extraction parse failures" instead of becoming an empty extraction.
