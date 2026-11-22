@@ -795,11 +795,24 @@ def _parse_extraction(raw: str) -> ExtractedFields:
         return ExtractedFields.model_validate({"_raw": raw})
 
 
+_EXTRACTION_RETRY_NOTE = (
+    "Your previous reply was not valid JSON. Reply with one valid JSON object only: "
+    "quote every string value, escape quotes and backslashes, no prose or code fence."
+)
+
+
 def extract_fields(abstract: str, *, model: str, system_prompt: str) -> ExtractedFields:
     """Run the structured-extraction prompt and return parsed fields."""
     if not abstract:
         return ExtractedFields()
     raw = gh_models_rest(model, system_prompt, abstract, max_tokens=512)
+    fields = _parse_extraction(raw)
+    if "_raw" not in fields.model_dump():
+        return fields
+    # Reason: about a third of W45 replies were near-JSON (an unquoted value,
+    # a missing comma); one provider-neutral retry recovers most of them (#111).
+    retry_prompt = f"{abstract}\n\n{_EXTRACTION_RETRY_NOTE}"
+    raw = gh_models_rest(model, system_prompt, retry_prompt, max_tokens=512)
     return _parse_extraction(raw)
 
 
@@ -852,6 +865,8 @@ def write_summary(
     after_keyword_filter: int | None = None,
     decide_enabled: bool = False,
     decide_count: int = 0,
+    extractions: int = 0,
+    parse_failures: int = 0,
 ) -> None:
     """Render the run's `summary.md` artifact.
 
@@ -888,6 +903,9 @@ def write_summary(
             f"- Decided via decide(): {decide_count} / {llm_calls} "
             "(the rest fell back to the chat call)"
         )
+    if extractions > 0:
+        pct = round(100 * parse_failures / extractions)
+        lines.append(f"- Extraction parse failures: {parse_failures} / {extractions} ({pct} %)")
     lines.extend(["", "## Relevant papers", ""])
     for p in relevant:
         lines.append(f"- [{p.title}]({_paper_url(server, p.doi)}) — *{p.category}*")
@@ -1040,12 +1058,14 @@ def _run_extraction_pass(
     server: str,
     model: str,
     output_dir: Path,
-) -> None:
+) -> tuple[int, int]:
+    """Extract fields for each relevant paper; return (extractions, parse failures)."""
     default_prompt = DEFAULT_EXTRACTION_PROMPTS.get(
         server, DEFAULT_EXTRACTION_PROMPTS["biorxiv"]
     )
     extraction_prompt = os.environ.get("EXTRACTION_PROMPT") or default_prompt
     total = len(relevant)
+    parse_failures = 0
     with (output_dir / "extracts.jsonl").open("w") as f:
         for i, (paper, abstract) in enumerate(relevant, 1):
             try:
@@ -1057,13 +1077,16 @@ def _run_extraction_pass(
                 )
                 fields = ExtractedFields()
             else:
-                status = "PARSE-FAILED" if "_raw" in fields.model_dump() else "OK"
+                failed = "_raw" in fields.model_dump()
+                parse_failures += failed
+                status = "PARSE-FAILED" if failed else "OK"
                 print(f"[{i}/{total}] extract {status} {paper.doi}", file=sys.stderr)
             record = {
                 **paper.model_dump(),
                 "extracted": fields.model_dump(),
             }
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return total, parse_failures
 
 
 def _warn_deprecated_env_vars() -> None:
@@ -1164,8 +1187,9 @@ def main() -> int:
 
     write_papers([p for p, _ in relevant], output_dir / "relevant.csv")
 
+    extractions, parse_failures = 0, 0
     if args.enrich and relevant:
-        _run_extraction_pass(
+        extractions, parse_failures = _run_extraction_pass(
             relevant, server=args.server, model=args.model, output_dir=output_dir
         )
 
@@ -1182,6 +1206,8 @@ def main() -> int:
         after_keyword_filter=after_keyword_filter,
         decide_enabled=decide_fn is not None,
         decide_count=decide_count,
+        extractions=extractions,
+        parse_failures=parse_failures,
     )
 
     append_step_summary(output_dir, server=args.server, year=year, week=week)

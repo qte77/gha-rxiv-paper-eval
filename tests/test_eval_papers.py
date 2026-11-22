@@ -1474,6 +1474,82 @@ class RunRelevancePassTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class ExtractFieldsRetryTests(unittest.TestCase):
+    """An unparseable extraction reply gets one retry (qte77/gha-rxiv-paper-eval#111)."""
+
+    def _extract(self, replies: list[str]):
+        with patch.object(eval_papers, "gh_models_rest", side_effect=replies) as mock_call:
+            ef = eval_papers.extract_fields("an abstract", model="m", system_prompt="p")
+        return ef, mock_call
+
+    def test_retries_once_on_parse_failure(self) -> None:
+        ef, mock_call = self._extract(['{"summary": not quoted}', '{"summary": "S"}'])
+        self.assertEqual(ef.summary, "S")
+        self.assertNotIn("_raw", ef.model_dump())
+        self.assertEqual(mock_call.call_count, 2)
+        retry_prompt = mock_call.call_args_list[1].args[2]
+        self.assertIn("an abstract", retry_prompt)
+        self.assertIn("valid JSON", retry_prompt)
+
+    def test_keeps_raw_when_retry_also_fails(self) -> None:
+        ef, mock_call = self._extract(['{"summary": not quoted}', "still not json"])
+        self.assertIn("_raw", ef.model_dump())
+        self.assertEqual(mock_call.call_count, 2)
+
+    def test_no_retry_when_first_reply_parses(self) -> None:
+        ef, mock_call = self._extract(['{"summary": "S"}'])
+        self.assertEqual(ef.summary, "S")
+        self.assertEqual(mock_call.call_count, 1)
+
+
+class RunExtractionPassCountTests(unittest.TestCase):
+    """The extraction pass reports how many replies stayed unparseable."""
+
+    def test_returns_extraction_and_parse_failure_counts(self) -> None:
+        papers = [
+            (eval_papers.Paper(
+                date="2026-11-10", iso_week="45", doi="10.1/a", version="1",
+                category="c", title="A", authors="X",
+            ), "abs a"),
+            (eval_papers.Paper(
+                date="2026-11-10", iso_week="45", doi="10.1/b", version="1",
+                category="c", title="B", authors="X",
+            ), "abs b"),
+        ]
+        results = [
+            eval_papers.ExtractedFields.model_validate({"_raw": "x"}),
+            eval_papers.ExtractedFields.model_validate({"summary": "S"}),
+        ]
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.object(eval_papers, "extract_fields", side_effect=results),
+        ):
+            counts = eval_papers._run_extraction_pass(
+                papers, server="arxiv", model="m", output_dir=pathlib.Path(tmpdir)
+            )
+        self.assertEqual(counts, (2, 1))
+
+
+class WriteSummaryParseFailureTests(unittest.TestCase):
+    """`summary.md` shows the extraction parse-failure yield (#111)."""
+
+    def _summary(self, **kwargs) -> str:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = pathlib.Path(tmpdir)
+            eval_papers.write_summary(
+                out, server="arxiv", year="2026", week="45", topic="t",
+                total=100, after_prefilter=67, relevant=[], **kwargs,
+            )
+            return (out / "summary.md").read_text()
+
+    def test_emits_parse_failure_line(self) -> None:
+        content = self._summary(extractions=67, parse_failures=21)
+        self.assertIn("Extraction parse failures: 21 / 67 (31 %)", content)
+
+    def test_omits_parse_failure_line_without_extractions(self) -> None:
+        self.assertNotIn("Extraction parse failures", self._summary())
+
+
 class WriteSummaryFailureRateTests(unittest.TestCase):
     """`write_summary` must surface the LLM call-failure rate so a 100%-rate-
     limited week is visibly distinguishable from a true-negative week (#6).

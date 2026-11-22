@@ -6,6 +6,10 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Added
+
+- Extraction: one retry when a model reply is not valid JSON, asking for a single valid JSON object; `summary.md` gains "Extraction parse failures: N / M" so the yield is visible without the job log (#111). JSON mode (`response_format`) is left for an endpoint test first.
+
 ### Changed
 
 - Claude Code `.claude/settings.json` sets `BASH_MAX_OUTPUT_LENGTH` to `15000` and
