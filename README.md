@@ -7,6 +7,7 @@
 [![Version](https://img.shields.io/badge/version-v0.7.1-blue)](CHANGELOG.md)
 [![CodeFactor](https://www.codefactor.io/repository/github/qte77/gha-rxiv-paper-eval/badge)](https://www.codefactor.io/repository/github/qte77/gha-rxiv-paper-eval)
 [![CI](https://github.com/qte77/gha-rxiv-paper-eval/actions/workflows/ci.yaml/badge.svg)](https://github.com/qte77/gha-rxiv-paper-eval/actions/workflows/ci.yaml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ## What
 
@@ -62,5 +63,9 @@ copy-paste.
 - [`examples/`](examples/)
 - [`CHANGELOG.md`](CHANGELOG.md)
 - [`gha-rxiv-feed-action`](https://github.com/qte77/gha-rxiv-feed-action)
+
+## License
+
+[Apache-2.0](LICENSE).
 
 [decide-conventions]: https://github.com/qte77/.github/blob/main/actions/decide/CONVENTIONS.md
