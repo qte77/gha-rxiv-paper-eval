@@ -105,7 +105,7 @@ for the authoritative list. Highlights:
 | --- | --- | --- |
 | `topic` | required | Free-text. Substituted into the relevance system prompt. |
 | `server` | `biorxiv` | `biorxiv`, `medrxiv`, or `arxiv`. |
-| `year` / `week` | newest published | UTC. Empty auto-discovers the newest week the feed has actually published for the server (resilient to its variable publish lag). Override for backfills. |
+| `year` / `week` | newest completed | UTC. Empty auto-discovers the newest week the feed has actually published for the server (resilient to its variable publish lag), skipping the in-progress ISO week, which the feed seeds as a header-only stub at week start. Override for backfills. |
 | `categories` | "" | Comma-separated allowlist. See feed action's `docs/categories.md`. |
 | `max_papers` | 0 | 0 = no cap. Truncates in CSV order. |
 | `max_llm_calls` | 0 | 0 = no cap. Ranks survivors by topic-keyword overlap (title+category+abstract) and sends only the top N to the LLM — quota-friendly alternative to `max_papers` (#7). |

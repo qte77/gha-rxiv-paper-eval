@@ -6,6 +6,10 @@ entries are PR-scoped.
 
 ## [Unreleased]
 
+### Fixed
+
+- Week auto-discovery skips the in-progress ISO week. The feed seeds that week as a header-only CSV at week start, so the scheduled Tuesday run picked the stub and failed the 0-row guard (run 45361682209). Discovery now takes the newest published week before the current one, and falls back to the previous year only when `year` is empty. A stub for a completed week is still picked, so a feed outage still fails the run. An explicit `week` is unchanged.
+
 ## [0.7.1] - 2026-11-22
 
 ### Fixed

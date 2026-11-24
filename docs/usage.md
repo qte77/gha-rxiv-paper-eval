@@ -122,7 +122,7 @@ for a full eval + triage pairing.
 ### Trigger the dispatch wrapper from CLI
 
 ```bash
-# Bare minimum — newest published feed week, biorxiv, max_papers=5 (dispatch default):
+# Bare minimum — newest completed published feed week, biorxiv, max_papers=5 (dispatch default):
 gh workflow run eval-papers-dispatch.yaml
 
 # Overrides (any subset):

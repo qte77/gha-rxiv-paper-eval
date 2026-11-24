@@ -340,51 +340,72 @@ def _gh_api_json(api_path: str) -> list[dict]:
     return json.loads(proc.stdout)
 
 
-def _max_numeric_entry(entries: list[dict], suffix: str) -> str:
-    """Return the numerically-largest ``<digits>{suffix}`` name in a gh listing.
+def _numeric_names(entries: list[dict], suffix: str) -> list[str]:
+    """Return the ``<digits>`` part of every ``<digits>{suffix}`` name in a gh listing.
 
     ``entries`` is a GitHub contents API listing; names look like ``24.csv``
-    (suffix ``.csv``) or ``2026`` (suffix ``""``). Numeric — not lexical —
-    ordering matters so ``24`` beats ``9``. Non-matching names are ignored;
-    raises if none match.
+    (suffix ``.csv``) or ``2026`` (suffix ``""``). Non-matching names are
+    ignored. Callers order the result numerically (``24`` beats ``9``).
     """
     pattern = re.compile(rf"^(\d+){re.escape(suffix)}$")
-    nums = [m.group(1) for e in entries if (m := pattern.match(e.get("name", "")))]
-    if not nums:
-        raise SystemExit(f"No '<digits>{suffix}' entries in feed listing")
-    return max(nums, key=int)
+    return [m.group(1) for e in entries if (m := pattern.match(e.get("name", "")))]
 
 
-def _discover_latest_week(feed_repo: str, server: str, year: str) -> tuple[str, str]:
-    """Return the newest (year, week) actually published under data/<server>/.
+def _discover_latest_week(
+    feed_repo: str, server: str, year: str, *, today: dt.date | None = None
+) -> tuple[str, str]:
+    """Return the newest completed (year, week) published under data/<server>/.
 
     The feed's publish cadence lags the calendar by a variable amount (1-2+ ISO
     weeks for biorxiv), so a date-derived 'current' or 'last completed' week
     routinely 404s. Listing the feed and taking the max year+week is resilient
     to any lag and independent of the week-start (Mon/Sun) convention.
+
+    The in-progress ISO week is skipped: the feed seeds it as a header-only
+    stub at week start, so it is never a complete week to evaluate. A stub of
+    a completed week is still returned, so the 0-row guard fails an outage
+    instead of quietly re-evaluating an older week. When ``year`` is empty and
+    the newest year holds only the in-progress week, the previous year is used.
     """
-    if not year:
-        year = _max_numeric_entry(
-            _gh_api_json(f"repos/{feed_repo}/contents/data/{server}"), ""
+    now = (today or dt.datetime.now(dt.timezone.utc).date()).isocalendar()
+    current = (now.year, now.week)
+    if year:
+        years = [year]
+    else:
+        listing = _gh_api_json(f"repos/{feed_repo}/contents/data/{server}")
+        years = sorted(_numeric_names(listing, ""), key=int, reverse=True)
+    for y in years:
+        weeks = _numeric_names(
+            _gh_api_json(f"repos/{feed_repo}/contents/data/{server}/{y}"), ".csv"
         )
-    weeks = _gh_api_json(f"repos/{feed_repo}/contents/data/{server}/{year}")
-    return year, _max_numeric_entry(weeks, ".csv").zfill(2)
+        completed = [w for w in weeks if (int(y), int(w)) < current]
+        if completed:
+            return y, max(completed, key=int).zfill(2)
+    raise SystemExit(
+        f"No completed week under data/{server}/ in {feed_repo} "
+        f"(years checked: {', '.join(years) or 'none'})"
+    )
 
 
 def resolve_year_week(
-    year: str, week: str, *, feed_repo: str, server: str
+    year: str,
+    week: str,
+    *,
+    feed_repo: str,
+    server: str,
+    today: dt.date | None = None,
 ) -> tuple[str, str]:
     """Resolve the (year, week) CSV to fetch.
 
     An explicit ``week`` is honored verbatim (``year`` defaults to the current
-    ISO year). When ``week`` is empty, auto-discover the newest week the feed
-    has actually published (see `_discover_latest_week`) — a date-derived
+    ISO year). When ``week`` is empty, auto-discover the newest completed week
+    the feed has published (see `_discover_latest_week`) — a date-derived
     default 404s because the feed lags the calendar unpredictably (#61, #69).
     """
     if week:
         iso_year = dt.datetime.now(dt.timezone.utc).isocalendar().year
         return (year or str(iso_year)), week.zfill(2)
-    return _discover_latest_week(feed_repo, server, year)
+    return _discover_latest_week(feed_repo, server, year, today=today)
 
 
 def fetch_feed(feed_repo: str, server: str, year: str, week: str, dest: Path) -> None:
