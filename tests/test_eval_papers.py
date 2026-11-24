@@ -5,6 +5,7 @@ Run locally:
 """
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
 import os
@@ -1889,17 +1890,22 @@ class ResolveYearWeekTests(unittest.TestCase):
     Explicit weeks are still honored verbatim.
     """
 
-    def test_max_numeric_entry_orders_by_int_and_strips_suffix(self) -> None:
-        # Lexical max would pick "9.csv"; numeric max must pick "24.csv".
+    def test_numeric_names_keeps_only_digit_names_and_strips_suffix(self) -> None:
         entries = [
             {"name": "9.csv"}, {"name": "13.csv"}, {"name": "24.csv"},
             {"name": "index.json"},  # ignored: doesn't match <digits>.csv
         ]
-        self.assertEqual(eval_papers._max_numeric_entry(entries, ".csv"), "24")
+        self.assertEqual(eval_papers._numeric_names(entries, ".csv"), ["9", "13", "24"])
 
-    def test_max_numeric_entry_raises_when_nothing_matches(self) -> None:
-        with self.assertRaises(SystemExit):
-            eval_papers._max_numeric_entry([{"name": "README.md"}], ".csv")
+    def test_discovery_raises_when_no_week_is_listed(self) -> None:
+        listings = [[{"name": "2026", "type": "dir"}], [{"name": "README.md"}]]
+        with (
+            patch.object(eval_papers, "_gh_api_json", side_effect=listings),
+            self.assertRaises(SystemExit),
+        ):
+            eval_papers.resolve_year_week(
+                "", "", feed_repo="x/y", server="biorxiv", today=dt.date(2026, 11, 24)
+            )
 
     def test_explicit_week_is_honored_without_feed_lookup(self) -> None:
         # Week given -> no discovery (no _gh_api_json call), year passes through,
@@ -1914,8 +1920,63 @@ class ResolveYearWeekTests(unittest.TestCase):
             [{"name": "13.csv"}, {"name": "24.csv"}, {"name": "9.csv"}],
         ]
         with patch.object(eval_papers, "_gh_api_json", side_effect=listings):
-            yw = eval_papers.resolve_year_week("", "", feed_repo="x/y", server="biorxiv")
+            yw = eval_papers.resolve_year_week(
+                "", "", feed_repo="x/y", server="biorxiv", today=dt.date(2026, 11, 24)
+            )
         self.assertEqual(yw, ("2026", "24"))
+
+    def test_empty_week_skips_the_in_progress_week_stub(self) -> None:
+        # Run 45361682209 (Tue 2026-11-24, ISO W48): the feed seeds a
+        # header-only 48.csv at week start, so the newest file is not a
+        # completed week. Discovery must pick W47, which has the rows.
+        listings = [
+            [{"name": "2026", "type": "dir"}],
+            [{"name": "46.csv"}, {"name": "47.csv"}, {"name": "48.csv"}],
+        ]
+        with patch.object(eval_papers, "_gh_api_json", side_effect=listings):
+            yw = eval_papers.resolve_year_week(
+                "", "", feed_repo="x/y", server="biorxiv", today=dt.date(2026, 11, 24)
+            )
+        self.assertEqual(yw, ("2026", "47"))
+
+    def test_stub_of_a_completed_week_is_still_picked(self) -> None:
+        # Outage replay, Tue 2026-11-17 (W47): the newest file is a W46 stub
+        # whose rows never landed. Discovery must return it (not fall back to
+        # W45) so the 0-row guard fails the run instead of going green.
+        listings = [
+            [{"name": "2026", "type": "dir"}],
+            [{"name": "45.csv"}, {"name": "46.csv"}],
+        ]
+        with patch.object(eval_papers, "_gh_api_json", side_effect=listings):
+            yw = eval_papers.resolve_year_week(
+                "", "", feed_repo="x/y", server="biorxiv", today=dt.date(2026, 11, 17)
+            )
+        self.assertEqual(yw, ("2026", "46"))
+
+    def test_year_rollover_falls_back_to_the_previous_year(self) -> None:
+        # Tue 2027-01-05 is ISO 2027-W01: the new year holds only the W01
+        # stub, so the newest completed week is 2026-W53.
+        listings = [
+            [{"name": "2026", "type": "dir"}, {"name": "2027", "type": "dir"}],
+            [{"name": "1.csv"}],
+            [{"name": "52.csv"}, {"name": "53.csv"}],
+        ]
+        with patch.object(eval_papers, "_gh_api_json", side_effect=listings):
+            yw = eval_papers.resolve_year_week(
+                "", "", feed_repo="x/y", server="biorxiv", today=dt.date(2027, 1, 5)
+            )
+        self.assertEqual(yw, ("2026", "53"))
+
+    def test_explicit_year_does_not_fall_back(self) -> None:
+        # A year the caller gave is kept: no completed week in it is an error.
+        listings = [[{"name": "1.csv"}]]
+        with (
+            patch.object(eval_papers, "_gh_api_json", side_effect=listings),
+            self.assertRaises(SystemExit),
+        ):
+            eval_papers.resolve_year_week(
+                "2027", "", feed_repo="x/y", server="biorxiv", today=dt.date(2027, 1, 5)
+            )
 
 
 # ---------------------------------------------------------------------------

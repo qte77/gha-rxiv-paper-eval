@@ -15,11 +15,11 @@ on:
         type: string
         default: biorxiv
       year:
-        description: "ISO year (YYYY). Empty = year of the newest week the feed has published (auto-discovered)."
+        description: "ISO year (YYYY). Empty = year of the newest completed week the feed has published (auto-discovered)."
         type: string
         default: ""
       week:
-        description: "ISO week (1-53). Empty = newest week the feed has published for this server (auto-discovered; resilient to the feed's variable publish lag)."
+        description: "ISO week (1-53). Empty = newest completed week the feed has published for this server (auto-discovered; resilient to the feed's variable publish lag)."
         type: string
         default: ""
       categories:
