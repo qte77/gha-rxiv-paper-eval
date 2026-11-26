@@ -10,6 +10,10 @@ entries are PR-scoped.
 
 - Licensed under Apache-2.0: `LICENSE`, the `license` field in `pyproject.toml`, and a README badge and section.
 
+### Changed
+
+- `bump-my-version.yaml` is now a thin caller of the `qte77/.github` reusable `bump-version.yml`, pinned to `v0.1.2` in tag form (#79). The CHANGELOG `[Unreleased]` promotion moved from an inline `awk` step into `[tool.bumpversion]` in `pyproject.toml`; the bump PR keeps its `feat(release): vX.Y.Z` title, and its commit is now signed through the API.
+
 ### Fixed
 
 - Week auto-discovery skips the in-progress ISO week. The feed seeds that week as a header-only CSV at week start, so the scheduled Tuesday run picked the stub and failed the 0-row guard (run 45361682209). Discovery now takes the newest published week before the current one, and falls back to the previous year only when `year` is empty. A stub for a completed week is still picked, so a feed outage still fails the run. An explicit `week` is unchanged.

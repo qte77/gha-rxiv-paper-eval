@@ -1,9 +1,11 @@
 name: bump-my-version
 
-# Dispatch a semver bump. Opens a PR that bumps the version (pyproject + README
-# / example pins via [tool.bumpversion]), promotes the CHANGELOG [Unreleased]
-# section into a dated release block, and resyncs uv.lock. Merge the PR after CI
-# is green; tag-release.yaml then tags vX.Y.Z against the squash-merge commit.
+# Dispatch a semver bump. Thin caller of the shared qte77/.github reusable: it bumps
+# the version files listed under [tool.bumpversion] in pyproject.toml (pyproject,
+# README / docs / example pins, and the CHANGELOG [Unreleased] promotion into a
+# dated release block), resyncs uv.lock, makes one signed commit on a bump branch
+# and opens a PR. Merge the PR after CI is green; tag-release.yaml then tags vX.Y.Z
+# against the squash-merge commit.
 
 on:
   workflow_dispatch:
@@ -19,65 +21,16 @@ on:
           - patch
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump:
-    runs-on: ubuntu-latest
-    env:
-      BUMP_TYPE: ${{ inputs.bump_type }}
-      BASE_BRANCH: ${{ github.ref_name }}
-      RUN_NUMBER: ${{ github.run_number }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
-        with:
-          enable-cache: true
-
-      - name: Install deps
-        run: make sync
-
-      - name: Bump version, promote changelog, open PR
-        run: |
-          set -euo pipefail
-          git config user.name "bump-my-version"
-          git config user.email "bump-my-version@qte77.gha"
-
-          PREV=$(uv run bump-my-version show current_version)
-          # --no-tag: tag-release.yaml tags the squash-merge commit on main.
-          # --no-commit: we commit once ourselves after the changelog + lock edits.
-          uv run bump-my-version bump --no-tag --no-commit "$BUMP_TYPE"
-          NEW=$(uv run bump-my-version show current_version)
-
-          # Promote the manual Keep-a-Changelog [Unreleased] section into a dated
-          # release block (this repo has no scriv fragments).
-          TODAY=$(date -u +%Y-%m-%d)
-          awk -v ver="$NEW" -v date="$TODAY" '
-            /^## \[Unreleased\]/ && !done { print; print ""; print "## [" ver "] - " date; done=1; next }
-            { print }
-          ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
-
-          uv lock
-
-          BRANCH="bump-${RUN_NUMBER}-${BASE_BRANCH}"
-          git switch -c "$BRANCH"
-          git add -A
-          git commit -m "feat(release): v${NEW}"
-          git push origin "$BRANCH"
-
-          gh pr create \
-            --base "$BASE_BRANCH" \
-            --head "$BRANCH" \
-            --title "feat(release): v${NEW}" \
-            --body "Automated bump \`${PREV}\` -> \`${NEW}\` (\`${BUMP_TYPE}\`). Promotes CHANGELOG [Unreleased] -> [${NEW}] and resyncs uv.lock. Merge once CI is green; tag-release will tag \`v${NEW}\`."
+    uses: qte77/.github/.github/workflows/bump-version.yml@aeef158fdd62a865aecd03571eaecbe3aa8169e4  # v0.1.2
+    with:
+      bump_type: ${{ inputs.bump_type }}
+      use_uv: true
+      sync_lockfile: true
+      pr_title_template: "feat(release): v{current}"
+    permissions:
+      contents: write
+      pull-requests: write

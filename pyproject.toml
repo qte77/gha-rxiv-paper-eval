@@ -73,8 +73,9 @@ quiet = false
 current_version = "0.7.1"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
-# We manage git ourselves: bump-my-version.yaml runs `bump --no-tag --no-commit`,
-# commits once on a branch, and tag-release.yaml tags the squash-merge on main.
+# Git is handled outside bump-my-version: the bump-my-version.yaml caller (qte77/.github
+# reusable) runs `bump --no-tag --no-commit`, makes one signed commit on a branch, and
+# tag-release.yaml tags the squash-merge on main.
 commit = false
 tag = false
 sign_tags = false
@@ -104,3 +105,12 @@ replace = "v{new_version}"
 filename = "examples/consumer-eval-vars.yaml"
 search = "v{current_version}"
 replace = "v{new_version}"
+
+# Promote the Keep-a-Changelog [Unreleased] section into a dated release block
+# (this repo has no scriv fragments). UTC date, as the runner uses.
+[[tool.bumpversion.files]]
+filename = "CHANGELOG.md"
+search = "## [Unreleased]"
+replace = """## [Unreleased]
+
+## [{new_version}] - {utcnow:%Y-%m-%d}"""
