@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   publish:
-    uses: qte77/.github/.github/workflows/publish-release.yml@b4674e37a8baa90102b4dd11c86c08a1e6335278  # v0.1.1
+    uses: qte77/.github/.github/workflows/publish-release.yml@aeef158fdd62a865aecd03571eaecbe3aa8169e4  # v0.1.2
     with:
       tag: ${{ inputs.tag }}
     permissions:
